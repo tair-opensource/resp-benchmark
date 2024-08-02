@@ -10,6 +10,7 @@ mod placeholder;
 pub struct Command {
     str: String,
     argv: Vec<PlaceholderEnum>,
+    #[allow(dead_code)]
     lock: Arc<Mutex<()>>,
 }
 
@@ -39,6 +40,7 @@ impl Command {
         }
         cmd
     }
+    #[allow(dead_code)]
     pub fn gen_cmd_with_lock(&mut self) -> redis::Cmd {
         let mut cmd = redis::Cmd::new();
         let _lock = self.lock.lock().unwrap();

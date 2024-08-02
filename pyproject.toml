@@ -1,0 +1,23 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "resp-benchmark"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+dynamic = ["version"]
+dependencies = ["pydantic"]
+
+[project.scripts]
+# Python entry-point wrapper to be installed in `$venv/bin`
+resp-benchmark = "resp_benchmark.cli:main"  # Python function that uses Rust
+
+[tool.maturin]
+module-name = "resp_benchmark._resp_benchmark_rust_lib"
+features = ["pyo3/extension-module"]
+python-source = "python"

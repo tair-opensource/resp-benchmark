@@ -1,5 +1,5 @@
-use crate::common::async_flag::AsyncFlag;
-use crate::Histogram;
+use crate::async_flag::AsyncFlag;
+use crate::histogram::Histogram;
 use std::cmp::min;
 use std::option::Option;
 use std::sync::atomic::AtomicU64;

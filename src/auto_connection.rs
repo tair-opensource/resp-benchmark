@@ -4,24 +4,30 @@ use tokio::sync::Notify;
 
 const MAX_CONN: u64 = if cfg!(target_os = "macos") { 64 } else { 1024 }; // 1024 is enough for most cases
 
-pub struct Limiter {
-    pub tcp_conn: u64,
+pub struct ConnLimiter {
+    pub total_conn: u64, // total connection count >= active_conn
     active_conn: AtomicU64,
-    target_conn: AtomicU64,
+    target_conn: AtomicU64, // The target connection count
 
     notify_add: Notify,
 }
 
-impl Limiter {
-    pub fn new(tcp_conn: u64) -> Self {
-        Limiter {
-            tcp_conn,
+impl ConnLimiter {
+    pub fn new(total_conn: u64, target_conn: u64) -> Self {
+        ConnLimiter {
+            total_conn,
             active_conn: AtomicU64::new(0),
-            target_conn: AtomicU64::new(0),
+            target_conn: AtomicU64::new(target_conn),
             notify_add: Notify::new(),
         }
     }
-    pub async fn wait_add(&self) {
+    pub async fn wait_new_conn(&self) {
+        let active_conn = self.active_conn.load(std::sync::atomic::Ordering::SeqCst);
+        let target_conn = self.target_conn.load(std::sync::atomic::Ordering::SeqCst);
+        if active_conn < target_conn {
+            self.active_conn.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            return;
+        }
         loop {
             self.notify_add.notified().await;
             let active_conn = self.active_conn.load(std::sync::atomic::Ordering::SeqCst);
@@ -37,17 +43,19 @@ impl Limiter {
         }
     }
     pub fn add_conn(&self) {
-        let old_val = self.target_conn.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if old_val >= self.tcp_conn {
+        let target_conn = self.target_conn.load(std::sync::atomic::Ordering::SeqCst);
+        if target_conn >= self.total_conn {
             return;
         }
+        self.target_conn.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         loop {
-            self.notify_add.notify_waiters();
+            self.notify_add.notify_one();
             let active_conn = self.active_conn.load(std::sync::atomic::Ordering::SeqCst);
             let target_conn = self.target_conn.load(std::sync::atomic::Ordering::SeqCst);
             if active_conn >= target_conn {
-                break;
+                return;
             }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
     pub fn get_active_conn(&self) -> u64 {
@@ -58,48 +66,37 @@ impl Limiter {
     }
 }
 
-pub struct AutoLimiter {
-    pub auto: bool,
+pub struct AutoConnection {
     pub ready: bool,
-    pub limiters: Vec<Arc<Limiter>>,
-    max_conn: u64,
-    target_conn: u64,
+    pub limiters: Vec<Arc<ConnLimiter>>,
 
     last_cnt: u64,
     last_qps: f64,
-    last_last_qps: f64,
     instant: std::time::Instant,
-    step: u64,
     inx: usize,
 }
 
-impl AutoLimiter {
-    pub fn new(mut max_conn: u64, count: u64) -> Self {
+impl AutoConnection {
+    pub fn new(active_conn: u64, thread_count: u64) -> Self {
         let mut limiters = Vec::new();
-        let auto = max_conn == 0;
-        if auto {
-            max_conn = MAX_CONN;
-        }
-        let mut total_connection = max_conn;
-        let mut left_count = count;
-        for _ in 0..count {
+        let auto = active_conn == 0;
+        let mut total_connection = if auto { MAX_CONN } else { active_conn };
+        let mut left_count = thread_count;
+        for _ in 0..thread_count {
             let my_conn = (total_connection + left_count - 1) / left_count;
-            limiters.push(Arc::new(Limiter::new(my_conn)));
+            let target_conn = if auto { 0 } else { my_conn };
+            let conn_limiter = Arc::new(ConnLimiter::new(my_conn, target_conn));
+            limiters.push(conn_limiter);
             total_connection -= my_conn;
             left_count -= 1;
         }
-        AutoLimiter {
-            auto,
-            ready: false,
+        AutoConnection {
+            ready: !auto,
             limiters,
-            max_conn,
-            target_conn: 0,
 
             last_cnt: 0,
             last_qps: 0.0,
-            last_last_qps: 0.0,
             instant: std::time::Instant::now(),
-            step: 1,
             inx: 0,
         }
     }
@@ -111,38 +108,36 @@ impl AutoLimiter {
         self.limiters.iter().map(|limiter| limiter.get_target_conn()).sum()
     }
 
-    pub fn adjust(&mut self, cnt: u64) -> bool {
+    pub fn adjust(&mut self, cnt: u64) {
         if self.ready {
-            return false;
+            return;
         }
-        if !self.auto {
-            for _ in 0..self.max_conn {
-                self.limiters[self.inx].add_conn();
-                self.inx = (self.inx + 1) % self.limiters.len();
-                self.target_conn += 1;
+
+        let elapsed = self.instant.elapsed().as_secs_f64();
+        if elapsed < 0.5 {
+            return;
+        }
+        let qps = (cnt - self.last_cnt) as f64 / elapsed;
+        let need_add_conn;
+        if qps >= self.last_qps * 1.5 || elapsed >= 3f64 {
+            if self.last_qps == 0.0 {
+                need_add_conn = 1; // at least 1 connection
+            } else if qps > self.last_qps * 1.1 {
+                need_add_conn = self.active_conn();
+            } else {
+                self.ready = true;
+                return;
             }
-            self.ready = true;
-            return false;
-        }
-
-        let target_conn: u64 = self.limiters.iter().map(|limiter| limiter.get_target_conn()).sum();
-        let qps = (cnt - self.last_cnt) as f64 / self.instant.elapsed().as_secs_f64();
-
-        if qps >= self.last_qps * 1.1 && target_conn + self.step * 2 < MAX_CONN {
-            self.step = self.step * 2;
-            self.last_last_qps = self.last_qps;
-            self.last_qps = qps;
         } else {
-            self.step = 0;
-            self.ready = true;
-            return false;
+            return;
         }
-        for _ in 0..self.step {
+        for _ in 0..need_add_conn {
             self.limiters[self.inx].add_conn();
             self.inx = (self.inx + 1) % self.limiters.len();
         }
+        self.last_qps = qps;
         self.last_cnt = cnt;
         self.instant = std::time::Instant::now();
-        return true;
+        return;
     }
 }

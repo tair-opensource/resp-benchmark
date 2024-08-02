@@ -20,6 +20,7 @@ impl AsyncFlag {
         self.sender.send(true).unwrap();
     }
 }
+
 impl Clone for AsyncFlag {
     fn clone(&self) -> Self {
         Self {

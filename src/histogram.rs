@@ -38,6 +38,7 @@ impl Histogram {
         self.buckets[index as usize].fetch_add(1, Ordering::Relaxed);
     }
 
+    #[allow(dead_code)]
     pub fn clear(&self) {
         self.cnt.store(0, Ordering::Relaxed);
         for i in 0..self.buckets.len() {
@@ -45,6 +46,7 @@ impl Histogram {
         }
     }
 
+    #[allow(dead_code)]
     pub fn un_record(&self, latency_us: u64) {
         let index = match latency_us {
             0..=999 => latency_us / 10,                            // <1ms precision 10us
@@ -122,9 +124,8 @@ impl Display for Histogram {
         }
         let avg = self.avg();
         let p99 = self.percentile(0.99);
-        let p999 = self.percentile(0.999);
 
-        write!(f, "cnt: {}, avg: {}, p99: {}, p999: {}", cnt, Histogram::humanize_us(avg), Histogram::humanize_us(p99), Histogram::humanize_us(p999))
+        write!(f, "cnt: {}, avg: {}, p99: {}", cnt, Histogram::humanize_us(avg), Histogram::humanize_us(p99))
     }
 }
 
