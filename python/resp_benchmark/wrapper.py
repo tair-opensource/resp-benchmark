@@ -157,7 +157,7 @@ class Benchmark:
             username=self.username,
             password=self.password,
             cluster=self.cluster,
-            tls=self.tls,
+            tls=False,
             timeout=self.timeout,
             cores=self.cores,
 
