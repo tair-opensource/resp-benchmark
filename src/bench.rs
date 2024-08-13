@@ -88,8 +88,7 @@ fn wait_finish(case: &Case, mut auto_connection: AutoConnection, mut context: Sh
             {
                 let cnt = histogram.cnt();
                 let qps = (cnt - log_last_cnt) as f64 / log_instance.elapsed().as_secs_f64();
-                let active_conn: u64 = auto_connection.active_conn();
-                let target_conn: u64 = auto_connection.target_conn();
+                let conn: u64 = auto_connection.active_conn();
                 if auto_connection.ready {
                     result.qps = (cnt - overall_cnt_overhead) as f64 / overall_time.elapsed().as_secs_f64();
                 }
@@ -97,7 +96,7 @@ fn wait_finish(case: &Case, mut auto_connection: AutoConnection, mut context: Sh
                     if load {
                         print!("\r\x1B[2KData loading qps: {:.0}, {:.2}%", qps, histogram.cnt() as f64 / case.count as f64 * 100f64);
                     } else {
-                        print!("\r\x1B[2Kqps: {:.0}(overall {:.0}), active_conn: {}, target_conn: {}, {}", qps, result.qps, active_conn, target_conn, histogram);
+                        print!("\r\x1B[2Kqps: {:.0}(overall {:.0}), conn: {}, {}", qps, result.qps, conn, histogram);
                     }
                 }
                 std::io::stdout().flush().unwrap();
@@ -105,8 +104,7 @@ fn wait_finish(case: &Case, mut auto_connection: AutoConnection, mut context: Sh
                 log_instance = std::time::Instant::now();
             }
             if !auto_connection.ready {
-                let cnt = histogram.cnt();
-                auto_connection.adjust(cnt);
+                auto_connection.adjust(&histogram);
                 if auto_connection.ready {
                     overall_cnt_overhead = histogram.cnt();
                     overall_time = std::time::Instant::now();
@@ -114,11 +112,11 @@ fn wait_finish(case: &Case, mut auto_connection: AutoConnection, mut context: Sh
                 }
             }
         }
-        let active_conn: u64 = auto_connection.active_conn();
+        let conn: u64 = auto_connection.active_conn();
         if load {
             print!("\r\x1B[2KData loaded, qps: {:.0}, time elapsed: {:.2}s\n", result.qps, overall_time.elapsed().as_secs_f64());
         } else {
-            print!("\r\x1B[2Kqps: {:.0}, conn: {}, {}\n", result.qps, active_conn, histogram)
+            print!("\r\x1B[2Kqps: {:.0}, conn: {}, {}\n", result.qps, conn, histogram)
         };
         result.avg_latency_ms = histogram.avg() as f64 / 1_000.0;
         result.p99_latency_ms = histogram.percentile(0.99) as f64 / 1_000.0;

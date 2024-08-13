@@ -18,14 +18,6 @@ fn _resp_benchmark_rust_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-#[pyclass]
-#[derive(Clone)]
-struct ResultPoint {
-    #[pyo3(get, set)] pub timestamp_second: i64,
-    #[pyo3(get, set)] pub qps: f64,
-    #[pyo3(get, set)] pub avg_latency_ms: f64,
-    #[pyo3(get, set)] pub p99_latency_ms: f64,
-}
 
 #[pyclass]
 #[derive(Default)]
@@ -33,7 +25,6 @@ struct BenchmarkResult {
     #[pyo3(get, set)] pub qps: f64,
     #[pyo3(get, set)] pub avg_latency_ms: f64,
     #[pyo3(get, set)] pub p99_latency_ms: f64,
-    #[pyo3(get, set)] pub per_second_data: Vec<ResultPoint>,
 }
 
 #[pyfunction]
@@ -56,10 +47,8 @@ fn benchmark(
 ) -> PyResult<BenchmarkResult> {
     assert!(cores.len() > 0);
     if load {
-        assert_ne!(connections, 0);
-        assert_ne!(count, 0);
+        assert_ne!(count, 0, "count must be greater than 0");
     }
-    assert!(count != 0 || seconds != 0);
 
     let _ = ctrlc::set_handler(move || {
         std::process::exit(0);

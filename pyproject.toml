@@ -4,6 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "resp-benchmark"
+description = "resp-benchmark is a benchmark tool for testing databases that support the RESP protocol, such as Redis, Valkey, and Tair."
 requires-python = ">=3.8"
 classifiers = [
     "Programming Language :: Rust",

@@ -1,6 +1,7 @@
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tokio::sync::Notify;
+use crate::histogram::Histogram;
 
 const MAX_CONN: u64 = if cfg!(target_os = "macos") { 64 } else { 1024 }; // 1024 is enough for most cases
 
@@ -104,11 +105,12 @@ impl AutoConnection {
     pub fn active_conn(&self) -> u64 {
         self.limiters.iter().map(|limiter| limiter.get_active_conn()).sum()
     }
+    #[allow(dead_code)]
     pub fn target_conn(&self) -> u64 {
         self.limiters.iter().map(|limiter| limiter.get_target_conn()).sum()
     }
 
-    pub fn adjust(&mut self, cnt: u64) {
+    pub fn adjust(&mut self, h: &Histogram) {
         if self.ready {
             return;
         }
@@ -117,12 +119,12 @@ impl AutoConnection {
         if elapsed < 0.5 {
             return;
         }
-        let qps = (cnt - self.last_cnt) as f64 / elapsed;
+        let qps = (h.cnt() - self.last_cnt) as f64 / elapsed;
         let need_add_conn;
-        if qps >= self.last_qps * 1.5 || elapsed >= 3f64 {
+        if qps >= self.last_qps * 2.0 || elapsed >= 3f64 {
             if self.last_qps == 0.0 {
                 need_add_conn = 1; // at least 1 connection
-            } else if qps > self.last_qps * 1.1 {
+            } else if qps > self.last_qps * 1.3 {
                 need_add_conn = self.active_conn();
             } else {
                 self.ready = true;
@@ -136,7 +138,7 @@ impl AutoConnection {
             self.inx = (self.inx + 1) % self.limiters.len();
         }
         self.last_qps = qps;
-        self.last_cnt = cnt;
+        self.last_cnt = h.cnt();
         self.instant = std::time::Instant::now();
         return;
     }

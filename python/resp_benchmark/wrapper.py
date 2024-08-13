@@ -9,23 +9,6 @@ from .cores import parse_cores_string
 
 
 @dataclass
-class ResultPoint:
-    """
-    Represents a single data point in benchmark results.
-
-    Attributes:
-        timestamp_second (int): Unix timestamp in seconds.
-        qps (float): Queries per second at this timestamp.
-        avg_latency_ms (float): Average latency in milliseconds at this timestamp.
-        p99_latency_ms (float): 99th percentile latency in milliseconds at this timestamp.
-    """
-    timestamp_second: int
-    qps: float
-    avg_latency_ms: float
-    p99_latency_ms: float
-
-
-@dataclass
 class Result:
     """
     Represents the overall result of a benchmark.
@@ -34,12 +17,10 @@ class Result:
         qps (float): Average queries per second.
         avg_latency_ms (float): Average latency in milliseconds.
         p99_latency_ms (float): 99th percentile latency in milliseconds.
-        per_second_data (List[ResultPoint]): List of per-second data points.
     """
     qps: float
     avg_latency_ms: float
     p99_latency_ms: float
-    per_second_data: List[ResultPoint]
 
 
 class Benchmark:
@@ -83,9 +64,9 @@ class Benchmark:
     def bench(
             self,
             command: str,
-            connections: int = 32,
+            connections: int = 0,
             pipeline: int = 1,
-            count: int = 100000,
+            count: int = 0,
             seconds: int = 0,
             quiet: bool = False,
     ) -> Result:
@@ -125,15 +106,6 @@ class Benchmark:
             qps=ret.qps,
             avg_latency_ms=ret.avg_latency_ms,
             p99_latency_ms=ret.p99_latency_ms,
-            per_second_data=[
-                ResultPoint(
-                    timestamp_second=point.timestamp_second,
-                    qps=point.qps,
-                    avg_latency_ms=point.avg_latency_ms,
-                    p99_latency_ms=point.p99_latency_ms,
-                )
-                for point in ret.per_second_data
-            ],
         )
 
         return result

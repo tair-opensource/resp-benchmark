@@ -1,1 +1,1 @@
-from .wrapper import Benchmark, Result, ResultPoint
+from .wrapper import Benchmark, Result

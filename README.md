@@ -1,6 +1,9 @@
 # resp-benchmark
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/your_username/resp-benchmark/blob/main/LICENSE)
+[![Python - Version](https://img.shields.io/badge/python-%3E%3D3.8-brightgreen)](https://www.python.org/doc/versions/)
+[![PyPI - Version](https://img.shields.io/pypi/v/resp-benchmark?color=%231772b4)](https://pypi.org/project/resp-benchmark/)
+[![PyPI - Downloads](https://img.shields.io/pypi/dw/resp-benchmark?color=%231ba784)](https://pypi.org/project/resp-benchmark/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/tair-opensource/resp-benchmark/blob/main/LICENSE)
 
 resp-benchmark is a benchmark tool for testing databases that support the RESP protocol, 
 such as [Redis](https://github.com/redis/redis), [Valkey](https://github.com/valkey-io/valkey), 
@@ -53,17 +56,19 @@ Supported placeholders include:
 ### Benchmarking zset
 
 ```shell
-# 1. Load data
-resp-benchmark --load -n 1000000 -P 10 "ZADD {key sequence 1000} {rand 1000} {value 8}"
-# 2. Benchmark
-resp-benchmark "ZRANGEBYSCORE {key uniform 1000} {range 1000 10}"
+# Load data
+resp-benchmark --load -P 10 -c 256 -n 10007000 "ZADD {key sequence 1000} {rand 70000} {key sequence 10007}"
+# Benchmark ZSCORE
+resp-benchmark -s 10 "ZSCORE {key uniform 1000} {key uniform 10007}"
+# Benchmark ZRANGEBYSCORE
+resp-benchmark -s 10 "ZRANGEBYSCORE {key uniform 1000} {range 70000 10}"
 ```
 
 ### Benchmarking Lua Scripts
 
 ```shell
 redis-cli 'SCRIPT LOAD "return redis.call('\''SET'\'', KEYS[1], ARGV[1])"'
-resp-benchmark "EVALSHA d8f2fad9f8e86a53d2a6ebd960b33c4972cacc37 1 {key uniform 100000} {value 64}"
+resp-benchmark -s 10 "EVALSHA d8f2fad9f8e86a53d2a6ebd960b33c4972cacc37 1 {key uniform 100000} {value 64}"
 ```
 
 ## Differences with redis-benchmark
