@@ -46,7 +46,11 @@ async fn run_commands_on_single_thread(limiter: Arc<ConnLimiter>, config: Client
                 // prepare pipeline
                 let mut p = Vec::new();
                 for _ in 0..pipeline_cnt {
-                    p.push(cmd.gen_cmd());
+                    if context.is_loading {
+                        p.push(cmd.gen_cmd_with_lock());
+                    } else {
+                        p.push(cmd.gen_cmd());
+                    }
                 }
                 let instant = std::time::Instant::now();
                 client.run_commands(p).await;
@@ -60,7 +64,7 @@ async fn run_commands_on_single_thread(limiter: Arc<ConnLimiter>, config: Client
     local.await;
 }
 
-fn wait_finish(case: &Case, mut auto_connection: AutoConnection, mut context: SharedContext, mut wg: WaitGroup, load: bool, quiet: bool) -> BenchmarkResult {
+fn wait_finish(case: &Case, mut auto_connection: AutoConnection, mut context: SharedContext, mut wg: WaitGroup, quiet: bool) -> BenchmarkResult {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     let mut result = BenchmarkResult::default();
 
@@ -93,10 +97,10 @@ fn wait_finish(case: &Case, mut auto_connection: AutoConnection, mut context: Sh
                     result.qps = (cnt - overall_cnt_overhead) as f64 / overall_time.elapsed().as_secs_f64();
                 }
                 if !quiet {
-                    if load {
-                        print!("\r\x1B[2KData loading qps: {:.0}, {:.2}%", qps, histogram.cnt() as f64 / case.count as f64 * 100f64);
+                    if context.is_loading {
+                        println!("\x1B[F\x1B[2KData loading qps: {:.0}, {:.2}%", qps, histogram.cnt() as f64 / case.count as f64 * 100f64);
                     } else {
-                        print!("\r\x1B[2Kqps: {:.0}(overall {:.0}), conn: {}, {}", qps, result.qps, conn, histogram);
+                        println!("\x1B[F\x1B[2Kqps: {:.0}(overall {:.0}), conn: {}, {}", qps, result.qps, conn, histogram);
                     }
                 }
                 std::io::stdout().flush().unwrap();
@@ -113,10 +117,10 @@ fn wait_finish(case: &Case, mut auto_connection: AutoConnection, mut context: Sh
             }
         }
         let conn: u64 = auto_connection.active_conn();
-        if load {
-            print!("\r\x1B[2KData loaded, qps: {:.0}, time elapsed: {:.2}s\n", result.qps, overall_time.elapsed().as_secs_f64());
+        if context.is_loading {
+            println!("\x1B[F\x1B[2KData loaded, qps: {:.0}, time elapsed: {:.2}s\n", result.qps, overall_time.elapsed().as_secs_f64());
         } else {
-            print!("\r\x1B[2Kqps: {:.0}, conn: {}, {}\n", result.qps, conn, histogram)
+            println!("\x1B[F\x1B[2Kqps: {:.0}, conn: {}, {}\n", result.qps, conn, histogram)
         };
         result.avg_latency_ms = histogram.avg() as f64 / 1_000.0;
         result.p99_latency_ms = histogram.percentile(0.99) as f64 / 1_000.0;
@@ -139,7 +143,7 @@ pub fn do_benchmark(client_config: ClientConfig, cores: Vec<u16>, case: Case, lo
     let mut thread_handlers = Vec::new();
     let wg = WaitGroup::new();
     let core_ids = core_affinity::get_core_ids().unwrap();
-    let context = SharedContext::new(case.count, case.seconds);
+    let context = SharedContext::new(case.count, case.seconds, load);
     for inx in 0..cores.len() {
         let client_config = client_config.clone();
         let case = case.clone();
@@ -159,7 +163,7 @@ pub fn do_benchmark(client_config: ClientConfig, cores: Vec<u16>, case: Case, lo
     }
 
     // log thread
-    let result = wait_finish(&case, auto_connection, context, wg, load, quiet);
+    let result = wait_finish(&case, auto_connection, context, wg, quiet);
 
     // join all threads
     for thread_handler in thread_handlers {

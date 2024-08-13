@@ -8,6 +8,7 @@ use std::time::Instant;
 
 #[derive(Clone)]
 pub struct SharedContext {
+    pub is_loading: bool,
     // limit by max_count
     current_count: Arc<AtomicU64>,
     max_count: u64,
@@ -24,8 +25,9 @@ pub struct SharedContext {
 }
 
 impl SharedContext {
-    pub fn new(max_count: u64, max_seconds: u64) -> Self {
+    pub fn new(max_count: u64, max_seconds: u64, is_loading: bool) -> Self {
         SharedContext {
+            is_loading,
             current_count: Arc::new(AtomicU64::new(0)),
             max_count,
             instant: Arc::new(RwLock::new(None)),

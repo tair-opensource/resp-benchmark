@@ -3,7 +3,6 @@ use nom::{
     sequence::delimited,
     branch::alt,
     bytes::complete::{is_not, tag},
-    character::complete::multispace0,
     multi::many0,
     combinator::{map, all_consuming},
 };
@@ -13,16 +12,15 @@ fn parse_string(input: &str) -> IResult<&str, PlaceholderEnum> {
     let s = alt((
         delimited(tag("\""), is_not("\""), tag("\"")),
         delimited(tag("\'"), is_not("\'"), tag("\'")),
-        delimited(multispace0, is_not("{ "), multispace0)
-        ));
+        is_not("{")
+    ));
     map(s, PlaceholderEnum::new_string)(input)
 }
 
 
 fn parse_placeholder(input: &str) -> IResult<&str, PlaceholderEnum> {
     let inner = delimited(tag("{"), is_not("}"), tag("}"));
-    let eat_whitespace = delimited(multispace0, inner, multispace0);
-    map(eat_whitespace, PlaceholderEnum::new)(input)
+    map(inner, PlaceholderEnum::new)(input)
 }
 
 
@@ -36,7 +34,7 @@ mod tests {
 
     #[test]
     fn test_root() {
-        let (nm, args) = match parse_all("aa {key sequence 100} bbb") {
+        let (nm, args) = match parse_all("aa test_{key sequence 100} bbb") {
             Ok((nm, args)) => (nm, args),
             Err(e) => {
                 println!("Error: {:?}", e);

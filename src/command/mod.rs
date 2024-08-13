@@ -33,21 +33,29 @@ impl Command {
     }
     pub fn gen_cmd(&mut self) -> redis::Cmd {
         let mut cmd = redis::Cmd::new();
+        let mut cmd_str = String::new();
         for ph in self.argv.iter_mut() {
             for arg in ph.gen() {
-                cmd.arg(arg);
+                cmd_str.push_str(&arg);
             }
+        }
+        for word in cmd_str.split_whitespace() {
+            cmd.arg(word);
         }
         cmd
     }
     #[allow(dead_code)]
     pub fn gen_cmd_with_lock(&mut self) -> redis::Cmd {
-        let mut cmd = redis::Cmd::new();
         let _lock = self.lock.lock().unwrap();
+        let mut cmd = redis::Cmd::new();
+        let mut cmd_str = String::new();
         for ph in self.argv.iter_mut() {
             for arg in ph.gen() {
-                cmd.arg(arg);
+                cmd_str.push_str(&arg);
             }
+        }
+        for word in cmd_str.split_whitespace() {
+            cmd.arg(word);
         }
         cmd
     }
