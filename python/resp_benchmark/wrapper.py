@@ -17,10 +17,12 @@ class Result:
         qps (float): Average queries per second.
         avg_latency_ms (float): Average latency in milliseconds.
         p99_latency_ms (float): 99th percentile latency in milliseconds.
+        connections (int): The number of parallel connections.
     """
     qps: float
     avg_latency_ms: float
     p99_latency_ms: float
+    connections: int
 
 
 class Benchmark:
@@ -106,6 +108,7 @@ class Benchmark:
             qps=ret.qps,
             avg_latency_ms=ret.avg_latency_ms,
             p99_latency_ms=ret.p99_latency_ms,
+            connections=ret.connections
         )
 
         return result
