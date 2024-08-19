@@ -53,21 +53,68 @@ Supported placeholders include:
 
 ## Best Practices
 
+Notes:
+1. It is recommended to clear the data each time you test to avoid interference from existing data.
+2. In actual tests, it is recommended to manually adjust the number of `connections`, such as setting it to 128, which can be achieved through `-c 128`. 
+
+### Benchmarking network
+
+```shell
+# Test PING command
+resp-benchmark -s 10 "PING"
+# Test ECHO command
+resp-benchmark -s 10 "ECHO {value 64}"
+```
+
+### Benchmarking string
+
+```shell
+# Test SET command
+resp-benchmark -s 10 "SET {key uniform 10000000} {value 64}"
+
+# Test GET command
+resp-benchmark --load -c 256 -P 10 -n 1000000 "SET {key sequence 10000000} {value 64}"
+resp-benchmark -s 10 "GET {key uniform 10000000}"
+```
+
+### Benchmarking list
+
+```shell
+# Test LPUSH command
+resp-benchmark -s 10 "LPUSH {key uniform 1000} {value 64}"
+
+# Test LINDEX command
+resp-benchmark --load -c 256 -P 10 -n 10000000 "LPUSH {key sequence 1000} {value 64}"
+resp-benchmark -s 10 "LINDEX {key uniform 1000} {rand 10000}"
+```
+
+### Benchmarking set
+
+```shell
+# Test SADD command
+resp-benchmark -s 10 "SADD {key uniform 1000} {value 64}"
+
+# Test SISMEMBER command
+resp-benchmark --load -c 256 -P 10 -n 10007000 "SADD {key sequence 1000} {key sequence 10007}"
+resp-benchmark -s 10 "SISMEMBER {key uniform 1000} {key uniform 10007}"
+```
+
 ### Benchmarking zset
 
 ```shell
-# Load data
+# Test ZADD command
+resp-benchmark -s 10 "ZADD {key uniform 1000} {rand 70000} {key uniform 10007}"
+
+# Benchmark ZSCORE & ZRANGEBYSCORE
 resp-benchmark --load -P 10 -c 256 -n 10007000 "ZADD {key sequence 1000} {rand 70000} {key sequence 10007}"
-# Benchmark ZSCORE
 resp-benchmark -s 10 "ZSCORE {key uniform 1000} {key uniform 10007}"
-# Benchmark ZRANGEBYSCORE
 resp-benchmark -s 10 "ZRANGEBYSCORE {key uniform 1000} {range 70000 10}"
 ```
 
 ### Benchmarking Lua Scripts
 
 ```shell
-redis-cli 'SCRIPT LOAD "return redis.call('\''SET'\'', KEYS[1], ARGV[1])"'
+redis-cli SCRIPT LOAD "return redis.call('SET', KEYS[1], ARGV[1])"
 resp-benchmark -s 10 "EVALSHA d8f2fad9f8e86a53d2a6ebd960b33c4972cacc37 1 {key uniform 100000} {value 64}"
 ```
 
