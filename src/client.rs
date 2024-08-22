@@ -4,6 +4,7 @@ use redis::aio::MultiplexedConnection;
 use redis::cluster_async::ClusterConnection;
 use redis::{Cmd, RedisFuture, Value};
 use std::fmt::{Display, Formatter};
+use urlencoding::encode;
 
 #[derive(Clone)]
 pub struct ClientConfig {
@@ -17,10 +18,12 @@ pub struct ClientConfig {
 
 impl ClientConfig {
     pub async fn get_client(&self) -> Client {
+        let username = encode(&self.username);
+        let password = encode(&self.password);
         let conn_str = if self.tls {
-            format!("rediss://{}:{}@{}/#insecure", &self.username, &self.password, &self.address)
+            format!("rediss://{}:{}@{}/#insecure", username, password, &self.address)
         } else {
-            format!("redis://{}:{}@{}", &self.username, &self.password, &self.address)
+            format!("redis://{}:{}@{}", username, password, &self.address)
         };
 
         if self.cluster {
