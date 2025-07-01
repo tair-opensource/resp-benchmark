@@ -1,1 +1,1 @@
-from .wrapper import Benchmark, Result
+from .wrapper import Benchmark, Result, BenchmarkWorkerPool

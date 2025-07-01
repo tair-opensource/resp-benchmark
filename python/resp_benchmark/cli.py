@@ -18,6 +18,7 @@ def parse_args():
     parser.add_argument("--cores", type=str, default=f"", help="Comma-separated list of CPU cores to use (default all)")
     parser.add_argument("--cluster", action="store_true", help="Use cluster mode (default false)")
     parser.add_argument("-n", metavar="requests", type=int, default=0, help="Total number of requests (default 0), 0 for unlimited.")
+    parser.add_argument("-t", metavar="target", type=int, default=0, help="Target number of requests per second, 0 for unlimited, recommended to be multiple of 100.")
     parser.add_argument("-s", metavar="seconds", type=int, default=0, help="Total time in seconds (default 0), 0 for unlimited.")
     parser.add_argument("-P", metavar="pipeline", type=int, default=1, help="Pipeline <numreq> requests. Default 1 (no pipeline).")
     # parser.add_argument("--tls", action="store_true", help="Use TLS for connection (default false)")
@@ -34,9 +35,9 @@ def main():
     args = parse_args()
     bm = Benchmark(host=args.h, port=args.p, username=args.u, password=args.a, cluster=args.cluster, cores=args.cores, timeout=30)
     if args.load:
-        bm.load_data(command=args.command, connections=args.c, pipeline=args.P, count=args.n)
+        bm.load_data(command=args.command, connections=args.c, pipeline=args.P, count=args.n, target=args.t)
     else:
-        bm.bench(command=args.command, connections=args.c, pipeline=args.P, count=args.n, seconds=args.s)
+        bm.bench(command=args.command, connections=args.c, pipeline=args.P, count=args.n, target=args.t, seconds=args.s)
 
 
 if __name__ == "__main__":

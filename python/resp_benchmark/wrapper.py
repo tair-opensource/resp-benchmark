@@ -7,6 +7,7 @@ import redis
 
 from .cores import parse_cores_string
 
+from ._resp_benchmark_rust_lib import BenchmarkWorkerPool
 
 @dataclass
 class Result:
@@ -22,6 +23,7 @@ class Result:
     qps: float
     avg_latency_ms: float
     p99_latency_ms: float
+    max_latency_ms: float
     connections: int
 
 
@@ -69,6 +71,7 @@ class Benchmark:
             connections: int = 0,
             pipeline: int = 1,
             count: int = 0,
+            target: int = 0,
             seconds: int = 0,
             quiet: bool = False,
     ) -> Result:
@@ -80,6 +83,7 @@ class Benchmark:
             connections (int): The number of parallel connections.
             pipeline (int): The number of commands to pipeline.
             count (int): The total number of requests to make.
+            target(int): The number of requests to send per second.
             seconds (int): The duration of the test in seconds.
             quiet: (bool): Whether to suppress output.
         Returns:
@@ -100,6 +104,7 @@ class Benchmark:
             connections=connections,
             pipeline=pipeline,
             count=count,
+            target=target,
             seconds=seconds,
             load=False,
             quiet=quiet,
@@ -108,18 +113,20 @@ class Benchmark:
             qps=ret.qps,
             avg_latency_ms=ret.avg_latency_ms,
             p99_latency_ms=ret.p99_latency_ms,
+            max_latency_ms=ret.max_latency_ms,
             connections=ret.connections
         )
 
         return result
 
-    def load_data(self, command: str, count: int, connections: int = 128, pipeline: int = 10, quiet: bool = False):
+    def load_data(self, command: str, count: int, target: int = 0, connections: int = 128, pipeline: int = 10, quiet: bool = False):
         """
         Load data into the Redis server using the specified command.
 
         Args:
             command (str): The Redis command to use for loading data.
             count (int): The total number of requests to make.
+            target(int): The number of requests to send per second.
             connections (int): The number of parallel connections.
             pipeline (int): The number of commands to pipeline
             quiet: (bool): Whether to suppress output.
@@ -140,6 +147,7 @@ class Benchmark:
             connections=connections,
             pipeline=pipeline,
             count=count,
+            target=target,
             seconds=0,
             load=True,
             quiet=quiet,
@@ -151,3 +159,51 @@ class Benchmark:
         """
         r = redis.Redis(host=self.host, port=self.port, username=self.username, password=self.password)
         r.flushall()
+
+    class AsyncBenchmarkContext:
+        def __init__(self, raw_benchmark_context):
+            self.raw_benchmark_context = raw_benchmark_context
+
+        def stop(self):
+            self.raw_benchmark_context.stop()
+        
+        def join(self):
+            self.raw_benchmark_context.join()
+        
+        def try_join(self):
+            return self.raw_benchmark_context.try_join()
+        
+        def current_result(self) -> Result:
+            ret = self.raw_benchmark_context.current_result()
+            return Result(
+                qps=ret.qps,
+                avg_latency_ms=ret.avg_latency_ms,
+                p99_latency_ms=ret.p99_latency_ms,
+                max_latency_ms=ret.max_latency_ms,
+                connections=ret.connections
+            )
+
+    def async_bench(self, benchmark_pool: BenchmarkWorkerPool, command: str, connections: int = 0, pipeline: int = 1, count: int = 0, target: int = 0, seconds: int = 0, quiet: bool = False) -> AsyncBenchmarkContext:
+        from . import _resp_benchmark_rust_lib
+        raw_ctx = _resp_benchmark_rust_lib.async_benchmark(
+            worker_pool=benchmark_pool,
+
+            host=self.host,
+            port=self.port,
+            username=self.username,
+            password=self.password,
+            cluster=self.cluster,
+            tls=False,  # TODO: Implement TLS support
+            timeout=self.timeout,
+            cores=self.cores,
+
+            command=command,
+            connections=connections,
+            pipeline=pipeline,
+            count=count,
+            target=target,
+            seconds=seconds,
+            load=False,
+            quiet=quiet,
+        )
+        return self.AsyncBenchmarkContext(raw_ctx)

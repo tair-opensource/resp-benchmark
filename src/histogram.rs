@@ -103,6 +103,10 @@ impl Histogram {
         0
     }
 
+    pub fn max(&self) -> u64 {
+        return self.percentile(1.0);
+    }
+
     fn humanize_us(latency_us: u64) -> String {
         match latency_us {
             0 => "<0.01ms".to_string(),
@@ -124,8 +128,9 @@ impl Display for Histogram {
         }
         let avg = self.avg();
         let p99 = self.percentile(0.99);
+        let max = self.max();
 
-        write!(f, "cnt: {}, avg: {}, p99: {}", cnt, Histogram::humanize_us(avg), Histogram::humanize_us(p99))
+        write!(f, "cnt: {}, avg: {}, p99: {}, max: {}", cnt, Histogram::humanize_us(avg), Histogram::humanize_us(p99), Histogram::humanize_us(max))
     }
 }
 
