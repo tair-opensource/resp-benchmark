@@ -146,7 +146,7 @@ impl DerefMut for Guard<'_> {
 impl Critical {
     #[inline]
     fn push_task_front(&mut self, task: &mut Node<Task>) {
-        // SAFETY: We both have mutable access to the node being pushed, and
+        // SAFETY: We both have a mutable access to the node being pushed, and
         // mutable access to the critical section through `self`. So we know we
         // have exclusive tampering rights to the waiter queue.
         unsafe {
@@ -156,7 +156,7 @@ impl Critical {
 
     #[inline]
     fn push_task(&mut self, task: &mut Node<Task>) {
-        // SAFETY: We both have mutable access to the node being pushed, and
+        // SAFETY: We both have a mutable access to the node being pushed, and
         // mutable access to the critical section through `self`. So we know we
         // have exclusive tampering rights to the waiter queue.
         unsafe {
@@ -166,7 +166,7 @@ impl Critical {
 
     #[inline]
     fn remove_task(&mut self, task: &mut Node<Task>) {
-        // SAFETY: We both have mutable access to the node being pushed, and
+        // SAFETY: We both have a mutable access to the node being pushed, and
         // mutable access to the critical section through `self`. So we know we
         // have exclusive tampering rights to the waiter queue.
         unsafe {
@@ -696,7 +696,7 @@ fn drain_wait_queue(critical: &mut Guard<'_>, state: &mut State<'_>) {
             let n = node.as_mut();
             n.fill(&mut state.balance);
 
-            if !n.is_completed() {
+            if !n.is_linked() {
                 critical.waiters.push_back(node);
                 break;
             }
@@ -977,14 +977,16 @@ impl AcquireFutInner {
 
     /// Access the completion flag.
     pub fn complete(&self) -> &AtomicBool {
-        // SAFETY: This is always safe to access since it's atomic.
-        unsafe { &*ptr::addr_of!((*self.node.get()).complete) }
+        // SAFETY: The pointer is created in `AcquireFut`, which is guaranteed
+        // to be alive as long as `self` is.
+        unsafe { &*ptr::addr_of!((&*self.node.get()).complete) }
     }
 
-    /// Get the underlying task mutably.
+    /// Get a mutable reference to the underlying task node.
     ///
-    /// We prove that the caller does indeed have mutable access to the node by
-    /// passing in a mutable reference to the critical section.
+    /// # Safety
+    ///
+    /// This is safe to call as long as `self` is alive.
     #[inline]
     pub fn get_task<'crit, C>(
         self: Pin<&'crit mut Self>,
@@ -1490,7 +1492,7 @@ pub struct Node<T> {
 
 impl<T> Node<T> {
     /// Construct a new unlinked node.
-    const fn new(value: T) -> Self {
+    pub(crate) const fn new(value: T) -> Self {
         Self {
             next: None,
             prev: None,
@@ -1500,33 +1502,29 @@ impl<T> Node<T> {
         }
     }
 
-    #[inline(always)]
-    fn is_linked(&self) -> bool {
+    /// Test if the current node is linked.
+    pub(crate) fn is_linked(&self) -> bool {
         self.linked
     }
 
     /// Set the next node.
-    #[inline(always)]
-    unsafe fn set_next(&mut self, node: Option<ptr::NonNull<Self>>) {
-        ptr::addr_of_mut!(self.next).write(node);
+    pub(crate) unsafe fn set_next(&mut self, node: Option<ptr::NonNull<Self>>) {
+        self.next = node;
     }
 
     /// Take the next node.
-    #[inline(always)]
-    unsafe fn take_next(&mut self) -> Option<ptr::NonNull<Self>> {
-        ptr::addr_of_mut!(self.next).replace(None)
+    pub(crate) unsafe fn take_next(&mut self) -> Option<ptr::NonNull<Self>> {
+        self.next.take()
     }
 
     /// Set the previous node.
-    #[inline(always)]
-    unsafe fn set_prev(&mut self, node: Option<ptr::NonNull<Self>>) {
-        ptr::addr_of_mut!(self.prev).write(node);
+    pub(crate) unsafe fn set_prev(&mut self, node: Option<ptr::NonNull<Self>>) {
+        self.prev = node;
     }
 
     /// Take the previous node.
-    #[inline(always)]
-    unsafe fn take_prev(&mut self) -> Option<ptr::NonNull<Self>> {
-        ptr::addr_of_mut!(self.prev).replace(None)
+    pub(crate) unsafe fn take_prev(&mut self) -> Option<ptr::NonNull<Self>> {
+        self.prev.take()
     }
 }
 
@@ -1562,101 +1560,110 @@ impl<T> LinkedList<T> {
     }
 
     unsafe fn push_front(&mut self, mut node: ptr::NonNull<Node<T>>) {
-        debug_assert!(node.as_ref().next.is_none());
-        debug_assert!(node.as_ref().prev.is_none());
-        debug_assert!(!node.as_ref().linked);
+        unsafe {
+            debug_assert!(node.as_ref().next.is_none());
+            debug_assert!(node.as_ref().prev.is_none());
+            debug_assert!(!node.as_ref().linked);
 
-        if let Some(mut head) = self.head.take() {
-            node.as_mut().set_next(Some(head));
-            head.as_mut().set_prev(Some(node));
-            self.head = Some(node);
-        } else {
-            self.head = Some(node);
-            self.tail = Some(node);
+            if let Some(mut head) = self.head.take() {
+                node.as_mut().set_next(Some(head));
+                head.as_mut().set_prev(Some(node));
+                self.head = Some(node);
+            } else {
+                self.head = Some(node);
+                self.tail = Some(node);
+            }
+
+            node.as_mut().linked = true;
         }
-
-        node.as_mut().linked = true;
     }
 
     unsafe fn push_back(&mut self, mut node: ptr::NonNull<Node<T>>) {
+        unsafe {
+            debug_assert!(node.as_ref().next.is_none());
+            debug_assert!(node.as_ref().prev.is_none());
+            debug_assert!(!node.as_ref().linked);
 
-        debug_assert!(node.as_ref().next.is_none());
-        debug_assert!(node.as_ref().prev.is_none());
-        debug_assert!(!node.as_ref().linked);
+            if let Some(mut tail) = self.tail.take() {
+                node.as_mut().set_prev(Some(tail));
+                tail.as_mut().set_next(Some(node));
+                self.tail = Some(node);
+            } else {
+                self.head = Some(node);
+                self.tail = Some(node);
+            }
 
-        if let Some(mut tail) = self.tail.take() {
-            node.as_mut().set_prev(Some(tail));
-            tail.as_mut().set_next(Some(node));
-            self.tail = Some(node);
-        } else {
-            self.head = Some(node);
-            self.tail = Some(node);
+            node.as_mut().linked = true;
         }
-
-        node.as_mut().linked = true;
     }
 
     #[cfg(test)]
     unsafe fn pop_front(&mut self) -> Option<ptr::NonNull<Node<T>>> {
-        let mut head = self.head?;
-        debug_assert!(head.as_ref().linked);
+        unsafe {
+            let mut head = self.head?;
+            debug_assert!(head.as_ref().linked);
 
-        if let Some(mut next) = head.as_mut().take_next() {
-            next.as_mut().set_prev(None);
-            self.head = Some(next);
-        } else {
-            debug_assert_eq!(self.tail, Some(head));
-            self.head = None;
-            self.tail = None;
+            if let Some(mut next) = head.as_mut().take_next() {
+                next.as_mut().set_prev(None);
+                self.head = Some(next);
+            } else {
+                debug_assert_eq!(self.tail, Some(head));
+                self.head = None;
+                self.tail = None;
+            }
+
+            debug_assert!(head.as_ref().prev.is_none());
+            debug_assert!(head.as_ref().next.is_none());
+            head.as_mut().linked = false;
+            Some(head)
         }
-
-        debug_assert!(head.as_ref().prev.is_none());
-        debug_assert!(head.as_ref().next.is_none());
-        head.as_mut().linked = false;
-        Some(head)
     }
 
     /// Pop the back element from the list.
     unsafe fn pop_back(&mut self) -> Option<ptr::NonNull<Node<T>>> {
-        let mut tail = self.tail?;
-        debug_assert!(tail.as_ref().linked);
+        unsafe {
+            let mut tail = self.tail?;
+            debug_assert!(tail.as_ref().linked);
 
-        if let Some(mut prev) = tail.as_mut().take_prev() {
-            prev.as_mut().set_next(None);
-            self.tail = Some(prev);
-        } else {
-            debug_assert_eq!(self.head, Some(tail));
-            self.head = None;
-            self.tail = None;
+            if let Some(mut prev) = tail.as_mut().take_prev() {
+                prev.as_mut().set_next(None);
+                self.tail = Some(prev);
+            } else {
+                debug_assert_eq!(self.head, Some(tail));
+                self.head = None;
+                self.tail = None;
+            }
+
+            debug_assert!(tail.as_ref().prev.is_none());
+            debug_assert!(tail.as_ref().next.is_none());
+            tail.as_mut().linked = false;
+            Some(tail)
         }
-
-        debug_assert!(tail.as_ref().prev.is_none());
-        debug_assert!(tail.as_ref().next.is_none());
-        tail.as_mut().linked = false;
-        Some(tail)
     }
 
     unsafe fn remove(&mut self, mut node: ptr::NonNull<Node<T>>) {
-        debug_assert!(node.as_ref().linked);
+        unsafe {
+            debug_assert!(node.as_ref().linked);
 
-        let next = node.as_mut().take_next();
-        let prev = node.as_mut().take_prev();
+            let next = node.as_mut().take_next();
+            let prev = node.as_mut().take_prev();
 
-        if let Some(mut next) = next {
-            next.as_mut().set_prev(prev);
-        } else {
-            debug_assert_eq!(self.tail, Some(node));
-            self.tail = prev;
+            if let Some(mut next) = next {
+                next.as_mut().set_prev(prev);
+            } else {
+                debug_assert_eq!(self.tail, Some(node));
+                self.tail = prev;
+            }
+
+            if let Some(mut prev) = prev {
+                prev.as_mut().set_next(next);
+            } else {
+                debug_assert_eq!(self.head, Some(node));
+                self.head = next;
+            }
+
+            node.as_mut().linked = false;
         }
-
-        if let Some(mut prev) = prev {
-            prev.as_mut().set_next(next);
-        } else {
-            debug_assert_eq!(self.head, Some(node));
-            self.head = next;
-        }
-
-        node.as_mut().linked = false;
     }
 
     unsafe fn front(&mut self) -> Option<ptr::NonNull<Node<T>>> {

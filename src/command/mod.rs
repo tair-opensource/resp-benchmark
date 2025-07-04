@@ -35,7 +35,7 @@ impl Command {
         let mut cmd = redis::Cmd::new();
         let mut cmd_str = String::new();
         for ph in self.argv.iter_mut() {
-            for arg in ph.gen() {
+            for arg in ph.generate() {
                 cmd_str.push_str(&arg);
             }
         }
@@ -50,7 +50,7 @@ impl Command {
         let mut cmd = redis::Cmd::new();
         let mut cmd_str = String::new();
         for ph in self.argv.iter_mut() {
-            for arg in ph.gen() {
+            for arg in ph.generate() {
                 cmd_str.push_str(&arg);
             }
         }
