@@ -5,7 +5,6 @@ mod auto_connection;
 mod shared_context;
 mod histogram;
 mod async_flag;
-mod qps_limiter;
 
 use ctrlc;
 use pyo3::prelude::*;

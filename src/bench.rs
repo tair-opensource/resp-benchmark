@@ -1,6 +1,7 @@
 use awaitgroup::WaitGroup;
 use colored::Colorize;
 use std::io::Write;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use tokio::{select, task};
 
@@ -9,7 +10,7 @@ use crate::auto_connection::{AutoConnection, ConnLimiter};
 use crate::client::ClientConfig;
 use crate::command::Command;
 use crate::shared_context::SharedContext;
-use crate::qps_limiter::RateLimiter;
+use governor::{Quota, DefaultDirectRateLimiter};
 
 #[derive(Clone)]
 pub struct Case {
@@ -21,7 +22,7 @@ pub struct Case {
     pub pipeline: u64,
 }
 
-async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limiter: Arc<Option<RateLimiter>>, config: ClientConfig, case: Case, context: SharedContext) {
+async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limiter: Arc<Option<DefaultDirectRateLimiter>>, config: ClientConfig, case: Case, context: SharedContext) {
     let local = task::LocalSet::new();
     for _ in 0..conn_limiter.total_conn {
         let conn_limiter = conn_limiter.clone();
@@ -63,7 +64,9 @@ async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limit
                 }
                 match qps_limiter.as_ref() {
                     Some(limiter) => {
-                        limiter.acquire(pipeline_cnt as usize * 1000).await;
+                        for _ in 0..pipeline_cnt {
+                            limiter.until_ready().await;
+                        }
                     }
                     None => {}
                 }
@@ -155,12 +158,7 @@ pub fn do_benchmark(client_config: ClientConfig, cores: Vec<u16>, case: Case, lo
     // calc target qps
     let qps_limiter = Arc::new(if case.target > 0 {
         Some(
-            RateLimiter::builder()
-                .max(case.target as usize * 1000)
-                .initial(0)
-                .interval(tokio::time::Duration::from_millis(1))
-                .refill(case.target as usize)
-                .build(),
+            DefaultDirectRateLimiter::direct(Quota::per_second(NonZeroU32::new(case.target as u32).unwrap())),
         )
     } else {
         None
