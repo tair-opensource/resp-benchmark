@@ -1,3 +1,3 @@
-from .wrapper import Benchmark, Result, BenchmarkWorkerPool
+from .wrapper import Benchmark, Result
 
-__all__ = ["Benchmark", "Result", "BenchmarkWorkerPool"]
+__all__ = ["Benchmark", "Result"]

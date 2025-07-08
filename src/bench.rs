@@ -2,14 +2,13 @@ use awaitgroup::WaitGroup;
 use colored::Colorize;
 use std::io::Write;
 use std::sync::Arc;
-use tokio::{select};
+use tokio::{select, task};
 
+use crate::BenchmarkResult;
 use crate::auto_connection::{AutoConnection, ConnLimiter};
 use crate::client::ClientConfig;
 use crate::command::Command;
 use crate::shared_context::SharedContext;
-use crate::BenchmarkResult;
-use crate::AsyncBenchmarkContext;
 use crate::qps_limiter::RateLimiter;
 
 #[derive(Clone)]
@@ -23,14 +22,14 @@ pub struct Case {
 }
 
 async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limiter: Arc<Option<RateLimiter>>, config: ClientConfig, case: Case, context: SharedContext) {
-    let mut local = vec![];
+    let local = task::LocalSet::new();
     for _ in 0..conn_limiter.total_conn {
         let conn_limiter = conn_limiter.clone();
         let qps_limiter = qps_limiter.clone();
         let config = config.clone();
         let case = case.clone();
         let mut context = context.clone();
-        let join_handle = tokio::task::spawn(async move {
+        local.spawn_local(async move {
             let mut client = config.get_client().await;
             let mut cmd = case.command.clone();
             let conn_limiter = conn_limiter.clone();
@@ -60,21 +59,18 @@ async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limit
                 client.run_commands(p).await;
                 let duration = instant.elapsed().as_micros() as u64;
                 for _ in 0..pipeline_cnt {
-                    context.record(duration);
+                    context.histogram.record(duration);
                 }
                 match qps_limiter.as_ref() {
                     Some(limiter) => {
-                        limiter.acquire(pipeline_cnt as usize).await;
+                        limiter.acquire(pipeline_cnt as usize * 1000).await;
                     }
                     None => {}
                 }
             }
         });
-        local.push(join_handle);
     }
-    for join_handle in local {
-        let _ = join_handle.await;
-    }
+    local.await;
 }
 
 fn wait_finish(case: &Case, mut auto_connection: AutoConnection, mut context: SharedContext, mut wg: WaitGroup, quiet: bool) -> BenchmarkResult {
@@ -160,10 +156,11 @@ pub fn do_benchmark(client_config: ClientConfig, cores: Vec<u16>, case: Case, lo
     let qps_limiter = Arc::new(if case.target > 0 {
         Some(
             RateLimiter::builder()
-                .max(case.target as usize * 5)
+                .max(case.target as usize * 1000)
+                .initial(0)
                 .interval(tokio::time::Duration::from_millis(1))
-                .refill(case.target as usize / 1000)
-                .build()
+                .refill(case.target as usize)
+                .build(),
         )
     } else {
         None
@@ -207,100 +204,4 @@ pub fn do_benchmark(client_config: ClientConfig, cores: Vec<u16>, case: Case, lo
     }
 
     return result;
-}
-
-async fn async_cron(mut auto_connection: AutoConnection, mut context: SharedContext, mut wg: WaitGroup) {
-    let histogram = context.histogram.clone();
-    // calc overall qps
-    // for log
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
-
-    let mut log_instance = std::time::Instant::now();
-    let mut log_last_cnt = histogram.cnt();
-
-    if auto_connection.ready {
-        context.start_timer();
-    }
-
-    loop {
-        select! {
-            _ = interval.tick() => {}
-            _ = wg.wait() => {break;}
-        }
-        let cnt = histogram.cnt();
-        let qps = (cnt - log_last_cnt) as f64 / log_instance.elapsed().as_secs_f64();
-        if !auto_connection.ready {
-            auto_connection.adjust(&histogram);
-            if auto_connection.ready {
-                context.start_timer();
-            }
-        }
-        log_last_cnt = cnt;
-        log_instance = std::time::Instant::now();
-
-        let mut result = BenchmarkResult::default();
-        let current_histogram_id = context.latest_histogramactive_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) % 2;
-        let current_histogram = &context.latest_histogram[current_histogram_id as usize];
-        result.qps = qps;
-        result.connections = auto_connection.active_conn();
-        result.avg_latency_ms = current_histogram.avg() as f64 / 1_000.0;
-        result.p99_latency_ms = current_histogram.percentile(0.99) as f64 / 1_000.0;
-        result.max_latency_ms = current_histogram.max() as f64 / 1_000.0;
-        *context.latest_result.lock().unwrap() = result;
-    }
-}
-
-pub fn do_benchmark_async(pool: Arc<tokio::runtime::Runtime>, client_config: ClientConfig, cores: Vec<u16>, case: Case, load: bool, quiet: bool) -> crate::AsyncBenchmarkContext {
-    if !quiet {
-        println!("{}: {}", "command".bold().blue(), case.command.to_string().green().bold());
-        println!("{}: {}", "connections".bold().blue(), if case.connections == 0 { "auto".to_string() } else { case.connections.to_string() });
-        println!("{}: {}", "count".bold().blue(), case.count);
-        println!("{}: {}", "target".bold().blue(), if case.target == 0 { "unlimited".to_string() } else { case.target.to_string() });
-        println!("{}: {}", "seconds".bold().blue(), case.seconds);
-        println!("{}: {}", "pipeline".bold().blue(), case.pipeline);
-    }
-
-    let n_parallel = std::cmp::max(1, std::cmp::min(cores.len(), case.connections as usize));
-
-    // calc connections
-    let auto_connection = AutoConnection::new(case.connections, n_parallel as u64);
-
-    // calc target qps
-    let qps_limiter = Arc::new(if case.target > 0 {
-        Some(
-            RateLimiter::builder()
-                .max(case.target as usize * 5)
-                .interval(tokio::time::Duration::from_millis(1))
-                .refill(case.target as usize / 1000)
-                .build()
-        )
-    } else {
-        None
-    });
-
-    let wg = WaitGroup::new();
-
-    let context = SharedContext::new(case.count, case.seconds, load);
-    for inx in 0..n_parallel {
-        let client_config = client_config.clone();
-        let case = case.clone();
-        let context = context.clone();
-        let wk = wg.worker();
-        let conn_limiter = auto_connection.limiters[inx].clone();
-        let qps_limiter = qps_limiter.clone();
-        pool.spawn(async move {
-            run_commands_on_single_thread(conn_limiter, qps_limiter, client_config, case, context).await;
-            wk.done();
-        });
-    }
-
-    let cron_ctx = context.clone();
-    let join_handle = pool.spawn(async move {
-        async_cron(auto_connection, cron_ctx, wg).await;
-    });
-
-    return AsyncBenchmarkContext {
-        ctx: context,
-        join_handle: Option::Some(join_handle),
-    };
 }

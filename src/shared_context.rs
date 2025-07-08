@@ -1,10 +1,9 @@
 use crate::async_flag::AsyncFlag;
 use crate::histogram::Histogram;
-use crate::BenchmarkResult;
 use std::cmp::min;
 use std::option::Option;
-use std::sync::atomic::{AtomicU64, AtomicU8};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 #[derive(Clone)]
@@ -23,11 +22,6 @@ pub struct SharedContext {
 
     // histogram
     pub histogram: Arc<Histogram>,
-    
-    // latest histogram
-    pub latest_histogram: Arc<[Histogram; 2]>,
-    pub latest_histogramactive_index: Arc<AtomicU8>,
-    pub latest_result: Arc<std::sync::Mutex<BenchmarkResult>>
 }
 
 impl SharedContext {
@@ -41,10 +35,6 @@ impl SharedContext {
             stop_flag: AsyncFlag::new(),
 
             histogram: Arc::new(Histogram::new()),
-
-            latest_histogram: Arc::new([Histogram::new(), Histogram::new()]),
-            latest_histogramactive_index: Arc::new(AtomicU8::new(0)), 
-            latest_result: Arc::new(Mutex::new(BenchmarkResult::default())),
         }
     }
 
@@ -84,10 +74,5 @@ impl SharedContext {
 
         return result;
     }
-
-    pub fn record(&self, latency_us: u64) {
-        self.histogram.record(latency_us);
-        let current_index = self.latest_histogramactive_index.load(std::sync::atomic::Ordering::Relaxed) as usize % 2;
-        self.latest_histogram[current_index].record(latency_us);
-    }
+    
 }
