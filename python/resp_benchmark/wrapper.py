@@ -22,7 +22,6 @@ class Result:
     qps: float
     avg_latency_ms: float
     p99_latency_ms: float
-    max_latency_ms: float
     connections: int
 
 
@@ -112,7 +111,6 @@ class Benchmark:
             qps=ret.qps,
             avg_latency_ms=ret.avg_latency_ms,
             p99_latency_ms=ret.p99_latency_ms,
-            max_latency_ms=ret.max_latency_ms,
             connections=ret.connections
         )
 

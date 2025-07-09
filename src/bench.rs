@@ -137,7 +137,6 @@ fn wait_finish(case: &Case, mut auto_connection: AutoConnection, mut context: Sh
         };
         result.avg_latency_ms = histogram.avg() as f64 / 1_000.0;
         result.p99_latency_ms = histogram.percentile(0.99) as f64 / 1_000.0;
-        result.max_latency_ms = histogram.max() as f64 / 1_000.0;
         result.connections = conn;
     });
     return result;

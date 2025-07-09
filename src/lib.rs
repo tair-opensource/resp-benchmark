@@ -25,7 +25,6 @@ struct BenchmarkResult {
     #[pyo3(get, set)] pub qps: f64,
     #[pyo3(get, set)] pub avg_latency_ms: f64,
     #[pyo3(get, set)] pub p99_latency_ms: f64,
-    #[pyo3(get, set)] pub max_latency_ms: f64,
     #[pyo3(get, set)] pub connections: u64,
 }
 
