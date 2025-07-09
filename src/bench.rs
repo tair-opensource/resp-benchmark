@@ -10,7 +10,7 @@ use crate::auto_connection::{AutoConnection, ConnLimiter};
 use crate::client::ClientConfig;
 use crate::command::Command;
 use crate::shared_context::SharedContext;
-use governor::{Quota, DefaultDirectRateLimiter};
+use governor::{Quota, DefaultDirectRateLimiter, Jitter};
 
 #[derive(Clone)]
 pub struct Case {
@@ -47,6 +47,15 @@ async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limit
                     break;
                 }
 
+                // 先进行速率限制检查
+                match qps_limiter.as_ref() {
+                    Some(limiter) => {
+                        limiter.until_ready_with_jitter(Jitter::up_to(std::time::Duration::from_micros(10000))).await;
+                        // limiter.until_ready().await;
+                    }
+                    None => {}
+                }
+
                 // prepare pipeline
                 let mut p = Vec::new();
                 for _ in 0..pipeline_cnt {
@@ -61,14 +70,6 @@ async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limit
                 let duration = instant.elapsed().as_micros() as u64;
                 for _ in 0..pipeline_cnt {
                     context.histogram.record(duration);
-                }
-                match qps_limiter.as_ref() {
-                    Some(limiter) => {
-                        for _ in 0..pipeline_cnt {
-                            limiter.until_ready().await;
-                        }
-                    }
-                    None => {}
                 }
             }
         });
@@ -157,9 +158,15 @@ pub fn do_benchmark(client_config: ClientConfig, cores: Vec<u16>, case: Case, lo
 
     // calc target qps
     let qps_limiter = Arc::new(if case.target > 0 {
-        Some(
-            DefaultDirectRateLimiter::direct(Quota::per_second(NonZeroU32::new(case.target as u32).unwrap())),
-        )
+        let limiter = DefaultDirectRateLimiter::direct(Quota::per_second(NonZeroU32::new(case.target as u32).unwrap()));
+        
+        // 预先消耗令牌以接近从 0 开始的效果
+        // 这会消耗一些初始可用的令牌
+        while limiter.check().is_ok() {
+            // 继续消耗直到没有可用令牌
+        }
+        
+        Some(limiter)
     } else {
         None
     });
