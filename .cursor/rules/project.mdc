@@ -15,6 +15,12 @@ Redis 接口数据库的性能测试套件。
 
 1. 不需要加太多异常捕获，让代码保持简洁。
 
+## 任务要求
+
+1. 使用 maturin develop 来进行编译安装测试
+2. 使用 resp-benchmark cli 来进行测试，不要新建文件测试
+
+
 ## Core Components
 
 ### Python Interface

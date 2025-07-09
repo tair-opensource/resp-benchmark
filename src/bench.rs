@@ -66,10 +66,12 @@ async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limit
                     }
                 }
                 let instant = std::time::Instant::now();
-                client.run_commands(p).await;
+                let should_count = client.run_commands(p).await;
                 let duration = instant.elapsed().as_micros() as u64;
-                for _ in 0..pipeline_cnt {
-                    context.histogram.record(duration);
+                if should_count {
+                    for _ in 0..pipeline_cnt {
+                        context.histogram.record(duration);
+                    }
                 }
             }
         });
