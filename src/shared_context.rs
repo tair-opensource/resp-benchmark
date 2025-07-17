@@ -67,6 +67,12 @@ impl SharedContext {
                 return 0;
             }
         }
+        
+        if self.stop_flag.flag() {
+            return 0;
+        }
+
         return result;
     }
+    
 }

@@ -2,7 +2,8 @@ use std::cmp::min;
 use std::process::exit;
 use crate::command::distribution::DistributionEnum;
 use std::str::FromStr;
-use rand::{distributions::Alphanumeric, thread_rng, Rng};
+use rand::prelude::*;
+use rand::distributions::Alphanumeric;
 
 #[derive(Debug, Clone)]
 pub enum PlaceholderEnum {
@@ -65,13 +66,13 @@ impl PlaceholderEnum {
         };
         ph
     }
-    pub fn gen(&mut self) -> Vec<String> {
+    pub fn generate(&mut self) -> Vec<String> {
         match self {
-            Self::String(p) => vec![p.gen()],
-            Self::Key(p) => vec![p.gen()],
-            Self::Value(p) => vec![p.gen()],
-            Self::Rand(p) => vec![p.gen()],
-            Self::Range(p) => p.gen(),
+            Self::String(p) => vec![p.generate()],
+            Self::Key(p) => vec![p.generate()],
+            Self::Value(p) => vec![p.generate()],
+            Self::Rand(p) => vec![p.generate()],
+            Self::Range(p) => p.generate(),
         }
     }
 }
@@ -85,7 +86,7 @@ impl PlaceholderString {
     pub fn new(value: String) -> Self {
         Self { value }
     }
-    fn gen(&mut self) -> String {
+    fn generate(&mut self) -> String {
         self.value.clone()
     }
 }
@@ -99,7 +100,7 @@ impl PlaceholderKey {
     fn new(distribution: DistributionEnum) -> Self {
         Self { distribution }
     }
-    fn gen(&mut self) -> String {
+    fn generate(&mut self) -> String {
         format!("key_{:010}", self.distribution.sample(&mut rand::thread_rng()))
     }
 }
@@ -113,9 +114,9 @@ impl PlaceholderValue {
     pub fn new(size: u64) -> Self {
         Self { size: size as usize }
     }
-    pub fn gen(&self) -> String {
-        let rng = thread_rng();
-        let chars: String = rng.sample_iter(&Alphanumeric).take(self.size).map(char::from).collect();
+    pub fn generate(&self) -> String {
+        let rng = rand::thread_rng();
+        let chars: String = rng.sample_iter(Alphanumeric).take(self.size).map(char::from).collect();
         chars
     }
 }
@@ -129,8 +130,8 @@ impl PlaceholderRand {
     pub fn new(range: u64) -> Self {
         Self { distribution: DistributionEnum::new("uniform", range) }
     }
-    fn gen(&mut self) -> String {
-        format!("{}", self.distribution.sample(&mut thread_rng()))
+    fn generate(&mut self) -> String {
+        format!("{}", self.distribution.sample(&mut rand::thread_rng()))
     }
 }
 
@@ -149,8 +150,8 @@ impl PlaceholderRange {
             width,
         }
     }
-    fn gen(&mut self) -> Vec<String> {
-        let left = self.distribution.sample(&mut thread_rng());
+    fn generate(&mut self) -> Vec<String> {
+        let left = self.distribution.sample(&mut rand::thread_rng());
         let right = min(left + self.width, self.range - 1);
         vec![left.to_string(), right.to_string()]
     }

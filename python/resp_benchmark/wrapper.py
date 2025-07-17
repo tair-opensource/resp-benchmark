@@ -69,6 +69,7 @@ class Benchmark:
             connections: int = 0,
             pipeline: int = 1,
             count: int = 0,
+            target: int = 0,
             seconds: int = 0,
             quiet: bool = False,
     ) -> Result:
@@ -80,6 +81,7 @@ class Benchmark:
             connections (int): The number of parallel connections.
             pipeline (int): The number of commands to pipeline.
             count (int): The total number of requests to make.
+            target(int): The number of requests to send per second.
             seconds (int): The duration of the test in seconds.
             quiet: (bool): Whether to suppress output.
         Returns:
@@ -100,6 +102,7 @@ class Benchmark:
             connections=connections,
             pipeline=pipeline,
             count=count,
+            target=target,
             seconds=seconds,
             load=False,
             quiet=quiet,
@@ -113,13 +116,14 @@ class Benchmark:
 
         return result
 
-    def load_data(self, command: str, count: int, connections: int = 128, pipeline: int = 10, quiet: bool = False):
+    def load_data(self, command: str, count: int, target: int = 0, connections: int = 128, pipeline: int = 10, quiet: bool = False):
         """
         Load data into the Redis server using the specified command.
 
         Args:
             command (str): The Redis command to use for loading data.
             count (int): The total number of requests to make.
+            target(int): The number of requests to send per second.
             connections (int): The number of parallel connections.
             pipeline (int): The number of commands to pipeline
             quiet: (bool): Whether to suppress output.
@@ -140,6 +144,7 @@ class Benchmark:
             connections=connections,
             pipeline=pipeline,
             count=count,
+            target=target,
             seconds=0,
             load=True,
             quiet=quiet,

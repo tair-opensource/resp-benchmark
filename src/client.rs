@@ -84,16 +84,22 @@ impl Client {
     }
 
 
-    pub async fn run_commands(&mut self, cmds: Vec<redis::Cmd>) {
+    pub async fn run_commands(&mut self, cmds: Vec<redis::Cmd>) -> bool {
         let mut pipeline = redis::pipe();
         for cmd in cmds {
             pipeline.add_command(cmd).ignore();
         }
         match pipeline.query_async(&mut self.conn).await {
-            Ok(()) => {}
+            Ok(()) => true,
             Err(e) => {
-                eprintln!("Failed to execute pipeline: {:?}", e);
-                std::process::exit(1);
+                let error_msg = format!("{:?}", e);
+                if error_msg.contains("THROTTLED: insufficient capacity unit") {
+                    // ignore throttled requests - don't count them in statistics
+                    false
+                } else {
+                    eprintln!("Failed to execute pipeline: {:?}", e);
+                    std::process::exit(1);
+                }
             }
         }
     }

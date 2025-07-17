@@ -103,6 +103,8 @@ impl Histogram {
         0
     }
 
+
+
     fn humanize_us(latency_us: u64) -> String {
         match latency_us {
             0 => "<0.01ms".to_string(),

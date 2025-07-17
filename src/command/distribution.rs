@@ -5,7 +5,7 @@ use rand::distributions::Distribution;
 #[derive(Clone, Debug)]
 pub enum DistributionEnum {
     Uniform(rand::distributions::Uniform<u64>),
-    Zipfian(zipf::ZipfDistribution),
+    Zipfian(rand_distr::Zipf<f64>),
     Sequence(SequenceDistribution),
 }
 
@@ -13,7 +13,7 @@ impl DistributionEnum {
     pub fn new(s: &str, range: u64) -> Self {
         match s {
             "uniform" => Self::Uniform(rand::distributions::Uniform::new(0, range)),
-            "zipfian" => Self::Zipfian(zipf::ZipfDistribution::new(range as usize, 1.03).unwrap()),
+            "zipfian" => Self::Zipfian(rand_distr::Zipf::new(range, 1.03).unwrap()),
             "sequence" => Self::Sequence(SequenceDistribution::new(range)),
             _ => panic!("Unknown distribution"),
         }

@@ -36,7 +36,7 @@ impl ConnLimiter {
             if active_conn >= target_conn {
                 continue;
             }
-            let old_value = self.active_conn.compare_exchange(active_conn, active_conn + 1, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst).unwrap();
+            let old_value = self.active_conn.compare_exchange(active_conn, active_conn + 1, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst).map_or_else(|e| e, |v| v);
             if old_value != active_conn {
                 continue;
             }

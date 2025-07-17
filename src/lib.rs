@@ -20,7 +20,7 @@ fn _resp_benchmark_rust_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 
 #[pyclass]
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 struct BenchmarkResult {
     #[pyo3(get, set)] pub qps: f64,
     #[pyo3(get, set)] pub avg_latency_ms: f64,
@@ -30,6 +30,7 @@ struct BenchmarkResult {
 
 #[pyfunction]
 fn benchmark(
+    py: Python<'_>,
     host: String,
     port: u16,
     username: String,
@@ -40,6 +41,7 @@ fn benchmark(
     cores: Vec<u16>,
     command: String,
     connections: u64,
+    target: u64,
     pipeline: u64,
     count: u64,
     seconds: u64,
@@ -68,8 +70,9 @@ fn benchmark(
         connections,
         pipeline,
         count,
+        target,
         seconds,
     };
-    let result = bench::do_benchmark(client_config, cores, case, load, quiet);
+    let result = py.allow_threads(|| bench::do_benchmark(client_config, cores, case, load, quiet));
     Ok(result)
 }

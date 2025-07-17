@@ -1,37 +1,41 @@
-use std::io::Write;
-use std::sync::Arc;
 use awaitgroup::WaitGroup;
 use colored::Colorize;
+use std::io::Write;
+use std::num::NonZeroU32;
+use std::sync::Arc;
 use tokio::{select, task};
 
 use crate::BenchmarkResult;
+use crate::auto_connection::{AutoConnection, ConnLimiter};
 use crate::client::ClientConfig;
 use crate::command::Command;
-use crate::auto_connection::{AutoConnection, ConnLimiter};
 use crate::shared_context::SharedContext;
+use governor::{DefaultDirectRateLimiter, Jitter, Quota};
 
 #[derive(Clone)]
 pub struct Case {
     pub command: Command,
     pub connections: u64,
     pub count: u64,
+    pub target: u64,
     pub seconds: u64,
     pub pipeline: u64,
 }
 
-async fn run_commands_on_single_thread(limiter: Arc<ConnLimiter>, config: ClientConfig, case: Case, context: SharedContext) {
+async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limiter: Arc<Option<DefaultDirectRateLimiter>>, config: ClientConfig, case: Case, context: SharedContext) {
     let local = task::LocalSet::new();
-    for _ in 0..limiter.total_conn {
-        let limiter = limiter.clone();
+    for _ in 0..conn_limiter.total_conn {
+        let conn_limiter = conn_limiter.clone();
+        let qps_limiter = qps_limiter.clone();
         let config = config.clone();
         let case = case.clone();
         let mut context = context.clone();
         local.spawn_local(async move {
             let mut client = config.get_client().await;
             let mut cmd = case.command.clone();
-            let limiter = limiter.clone();
+            let conn_limiter = conn_limiter.clone();
             select! {
-                _ = limiter.wait_new_conn() =>{}
+                _ = conn_limiter.wait_new_conn() =>{}
                 _ = context.wait_stop() => {
                     return;
                 }
@@ -41,6 +45,15 @@ async fn run_commands_on_single_thread(limiter: Arc<ConnLimiter>, config: Client
                 if pipeline_cnt == 0 {
                     context.stop();
                     break;
+                }
+
+                // 先进行速率限制检查
+                match qps_limiter.as_ref() {
+                    Some(limiter) => {
+                        let j = Jitter::up_to(std::time::Duration::from_micros(1_000_000_u64 * conn_limiter.total_conn / case.target));
+                        limiter.until_ready_with_jitter(j).await;
+                    }
+                    None => {}
                 }
 
                 // prepare pipeline
@@ -53,10 +66,12 @@ async fn run_commands_on_single_thread(limiter: Arc<ConnLimiter>, config: Client
                     }
                 }
                 let instant = std::time::Instant::now();
-                client.run_commands(p).await;
+                let should_count = client.run_commands(p).await;
                 let duration = instant.elapsed().as_micros() as u64;
-                for _ in 0..pipeline_cnt {
-                    context.histogram.record(duration);
+                if should_count {
+                    for _ in 0..pipeline_cnt {
+                        context.histogram.record(duration);
+                    }
                 }
             }
         });
@@ -134,12 +149,22 @@ pub fn do_benchmark(client_config: ClientConfig, cores: Vec<u16>, case: Case, lo
         println!("{}: {}", "command".bold().blue(), case.command.to_string().green().bold());
         println!("{}: {}", "connections".bold().blue(), if case.connections == 0 { "auto".to_string() } else { case.connections.to_string() });
         println!("{}: {}", "count".bold().blue(), case.count);
+        println!("{}: {}", "target".bold().blue(), if case.target == 0 { "unlimited".to_string() } else { case.target.to_string() });
         println!("{}: {}", "seconds".bold().blue(), case.seconds);
         println!("{}: {}", "pipeline".bold().blue(), case.pipeline);
     }
 
     // calc connections
     let auto_connection = AutoConnection::new(case.connections, cores.len() as u64);
+
+    // calc target qps
+    let qps_limiter = Arc::new(if case.target > 0 {
+        let limiter = DefaultDirectRateLimiter::direct(Quota::per_second(NonZeroU32::new(case.target as u32).unwrap()));
+        while limiter.check().is_ok() {}
+        Some(limiter)
+    } else {
+        None
+    });
 
     let mut thread_handlers = Vec::new();
     let wg = WaitGroup::new();
@@ -151,12 +176,13 @@ pub fn do_benchmark(client_config: ClientConfig, cores: Vec<u16>, case: Case, lo
         let context = context.clone();
         let wk = wg.worker();
         let core_id = core_ids[cores[inx] as usize];
-        let limiter = auto_connection.limiters[inx].clone();
+        let conn_limiter = auto_connection.limiters[inx].clone();
+        let qps_limiter = qps_limiter.clone();
         let thread_handler = std::thread::spawn(move || {
             core_affinity::set_for_current(core_id); // not work on Apple Silicon
             let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
             rt.block_on(async {
-                run_commands_on_single_thread(limiter, client_config, case, context).await;
+                run_commands_on_single_thread(conn_limiter, qps_limiter, client_config, case, context).await;
                 wk.done();
             });
         });
