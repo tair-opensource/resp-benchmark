@@ -20,7 +20,7 @@
 
 ## 安装
 
-需要 Python 3.8 或更高版本。
+需要 Python 3.9 或更高版本。
 
 ```bash
 pip install resp-benchmark
