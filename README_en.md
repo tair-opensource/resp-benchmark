@@ -24,7 +24,7 @@ A high-performance benchmark tool for testing databases that support the RESP (R
 
 ## Installation
 
-Requires Python 3.8 or higher.
+Requires Python 3.9 or higher.
 
 ```bash
 pip install resp-benchmark
