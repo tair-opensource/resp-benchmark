@@ -72,6 +72,7 @@ class Benchmark:
             target: int = 0,
             seconds: int = 0,
             quiet: bool = False,
+            short_connection: bool = False,
     ) -> Result:
         """
         Runs a benchmark test with the specified parameters.
@@ -84,9 +85,12 @@ class Benchmark:
             target(int): The number of requests to send per second.
             seconds (int): The duration of the test in seconds.
             quiet: (bool): Whether to suppress output.
+            short_connection (bool): If True, create a new connection for each command and close it after use.
         Returns:
             Result: The results of the benchmark test.
         """
+        if short_connection and pipeline > 1:
+            raise ValueError("short_connection mode does not support pipeline (pipeline must be 1)")
         from . import _resp_benchmark_rust_lib
         ret = _resp_benchmark_rust_lib.benchmark(
             host=self.host,
@@ -106,6 +110,7 @@ class Benchmark:
             seconds=seconds,
             load=False,
             quiet=quiet,
+            short_connection=short_connection,
         )
         result = Result(
             qps=ret.qps,
@@ -116,7 +121,7 @@ class Benchmark:
 
         return result
 
-    def load_data(self, command: str, count: int, target: int = 0, connections: int = 128, pipeline: int = 10, quiet: bool = False):
+    def load_data(self, command: str, count: int, target: int = 0, connections: int = 128, pipeline: int = 10, quiet: bool = False, short_connection: bool = False):
         """
         Load data into the Redis server using the specified command.
 
@@ -127,7 +132,10 @@ class Benchmark:
             connections (int): The number of parallel connections.
             pipeline (int): The number of commands to pipeline
             quiet: (bool): Whether to suppress output.
+            short_connection (bool): If True, create a new connection for each command and close it after use.
         """
+        if short_connection:
+            raise ValueError("short_connection mode does not support loading")
 
         from . import _resp_benchmark_rust_lib
         _resp_benchmark_rust_lib.benchmark(
@@ -148,6 +156,7 @@ class Benchmark:
             seconds=0,
             load=True,
             quiet=quiet,
+            short_connection=short_connection,
         )
 
     def flushall(self):

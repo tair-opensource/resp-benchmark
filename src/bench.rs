@@ -20,6 +20,7 @@ pub struct Case {
     pub target: u64,
     pub seconds: u64,
     pub pipeline: u64,
+    pub short_connection: bool,
 }
 
 async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limiter: Arc<Option<DefaultDirectRateLimiter>>, config: ClientConfig, case: Case, context: SharedContext) {
@@ -31,7 +32,6 @@ async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limit
         let case = case.clone();
         let mut context = context.clone();
         local.spawn_local(async move {
-            let mut client = config.get_client().await;
             let mut cmd = case.command.clone();
             let conn_limiter = conn_limiter.clone();
             select! {
@@ -40,37 +40,76 @@ async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limit
                     return;
                 }
             }
-            loop {
-                let pipeline_cnt = context.fetch(case.pipeline);
-                if pipeline_cnt == 0 {
-                    context.stop();
-                    break;
-                }
-
-                // 先进行速率限制检查
-                match qps_limiter.as_ref() {
-                    Some(limiter) => {
-                        let j = Jitter::up_to(std::time::Duration::from_micros(1_000_000_u64 * conn_limiter.total_conn / case.target));
-                        limiter.until_ready_with_jitter(j).await;
+            
+            if case.short_connection {
+                // Short connection mode: create a new connection for each command
+                // Note: pipeline must be 1 and load must be false in short_connection mode
+                assert_eq!(case.pipeline, 1, "pipeline must be 1 in short_connection mode");
+                loop {
+                    let pipeline_cnt = context.fetch(case.pipeline);
+                    if pipeline_cnt == 0 {
+                        context.stop();
+                        break;
                     }
-                    None => {}
-                }
 
-                // prepare pipeline
-                let mut p = Vec::new();
-                for _ in 0..pipeline_cnt {
-                    if context.is_loading {
-                        p.push(cmd.gen_cmd_with_lock());
-                    } else {
-                        p.push(cmd.gen_cmd());
+                    // Rate limiting check
+                    match qps_limiter.as_ref() {
+                        Some(limiter) => {
+                            let j = Jitter::up_to(std::time::Duration::from_micros(1_000_000_u64 * conn_limiter.total_conn / case.target));
+                            limiter.until_ready_with_jitter(j).await;
+                        }
+                        None => {}
                     }
-                }
-                let instant = std::time::Instant::now();
-                let should_count = client.run_commands(p).await;
-                let duration = instant.elapsed().as_micros() as u64;
-                if should_count {
-                    for _ in 0..pipeline_cnt {
+
+                    // Create new connection and execute single command
+                    let mut client = config.get_client().await;
+                    let instant = std::time::Instant::now();
+                    let mut p = Vec::new();
+                    p.push(cmd.gen_cmd());
+                    let should_count = client.run_commands(p).await;
+                    let duration = instant.elapsed().as_micros() as u64;
+                    // Explicitly drop connection to close it immediately
+                    drop(client);
+                    
+                    if should_count {
                         context.histogram.record(duration);
+                    }
+                }
+            } else {
+                // 长连接模式：复用连接
+                let mut client = config.get_client().await;
+                loop {
+                    let pipeline_cnt = context.fetch(case.pipeline);
+                    if pipeline_cnt == 0 {
+                        context.stop();
+                        break;
+                    }
+
+                    // 先进行速率限制检查
+                    match qps_limiter.as_ref() {
+                        Some(limiter) => {
+                            let j = Jitter::up_to(std::time::Duration::from_micros(1_000_000_u64 * conn_limiter.total_conn / case.target));
+                            limiter.until_ready_with_jitter(j).await;
+                        }
+                        None => {}
+                    }
+
+                    // prepare pipeline
+                    let mut p = Vec::new();
+                    for _ in 0..pipeline_cnt {
+                        if context.is_loading {
+                            p.push(cmd.gen_cmd_with_lock());
+                        } else {
+                            p.push(cmd.gen_cmd());
+                        }
+                    }
+                    let instant = std::time::Instant::now();
+                    let should_count = client.run_commands(p).await;
+                    let duration = instant.elapsed().as_micros() as u64;
+                    if should_count {
+                        for _ in 0..pipeline_cnt {
+                            context.histogram.record(duration);
+                        }
                     }
                 }
             }
@@ -152,6 +191,7 @@ pub fn do_benchmark(client_config: ClientConfig, cores: Vec<u16>, case: Case, lo
         println!("{}: {}", "target".bold().blue(), if case.target == 0 { "unlimited".to_string() } else { case.target.to_string() });
         println!("{}: {}", "seconds".bold().blue(), case.seconds);
         println!("{}: {}", "pipeline".bold().blue(), case.pipeline);
+        println!("{}: {}", "short_connection".bold().blue(), case.short_connection);
     }
 
     // calc connections

@@ -47,10 +47,15 @@ fn benchmark(
     seconds: u64,
     load: bool,
     quiet: bool,
+    short_connection: bool,
 ) -> PyResult<BenchmarkResult> {
     assert!(cores.len() > 0);
     if load {
         assert_ne!(count, 0, "count must be greater than 0");
+    }
+    if short_connection {
+        assert!(!load, "short_connection mode does not support loading");
+        assert_eq!(pipeline, 1, "short_connection mode does not support pipeline (pipeline must be 1)");
     }
 
     let _ = ctrlc::set_handler(move || {
@@ -72,6 +77,7 @@ fn benchmark(
         count,
         target,
         seconds,
+        short_connection,
     };
     let result = py.allow_threads(|| bench::do_benchmark(client_config, cores, case, load, quiet));
     Ok(result)

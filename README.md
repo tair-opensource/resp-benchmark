@@ -136,6 +136,7 @@ HGET {key uniform 1000} {key uniform 100}
 | `--cores` | 使用的 CPU 核心（逗号分隔） | 全部 |
 | `--cluster` | 启用集群模式 | false |
 | `--load` | 仅加载数据，不进行基准测试 | false |
+| `--short-connection` | 短连接模式：每次命令都创建新连接 | false |
 
 ## 高级特性
 
@@ -274,6 +275,24 @@ redis-cli SCRIPT LOAD "return redis.call('SET', KEYS[1], ARGV[1])"
 resp-benchmark -s 10 "EVALSHA d8f2fad9f8e86a53d2a6ebd960b33c4972cacc37 1 {key uniform 100000} {value 64}"
 ```
 
+## 短连接性能测试
+
+短连接模式：每次命令都创建新连接，执行完成后立即关闭。
+
+**限制：**
+- 不支持 `--load` 和 `-P`（pipeline 必须为 1）
+
+**使用：**
+```bash
+resp-benchmark --short-connection "PING" -c 50 -s 10
+```
+
+**Python API：**
+```python
+result = bm.bench(command="PING", seconds=30, connections=50, short_connection=True)
+```
+
+
 ## Python 库 API
 
 ### 初始化
@@ -351,6 +370,14 @@ result = bm.bench(
     seconds=30,
     connections=64,
     pipeline=10
+)
+
+# 短连接模式
+result = bm.bench(
+    command="PING",
+    seconds=30,
+    connections=50,
+    short_connection=True
 )
 ```
 

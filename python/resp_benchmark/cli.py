@@ -1,4 +1,5 @@
 import argparse
+import sys
 from importlib.metadata import version
 
 from resp_benchmark.wrapper import Benchmark
@@ -23,6 +24,7 @@ def parse_args():
     parser.add_argument("-P", metavar="pipeline", type=int, default=1, help="Pipeline <numreq> requests. Default 1 (no pipeline).")
     # parser.add_argument("--tls", action="store_true", help="Use TLS for connection (default false)")
     parser.add_argument("--load", action="store_true", help="Only load data to Redis, no benchmark.")
+    parser.add_argument("--short-connection", action="store_true", help="Create a new connection for each command and close it after use.")
     parser.add_argument('-v', '--version', action='version', version=version('resp_benchmark'))
     parser.add_argument("--help", action="help", help="Output this help and exit.")
     parser.add_argument("command", type=str, default="SET {key uniform 100000} {value 64}", nargs="?", help="The Redis command to benchmark (default SET {key uniform 100000} {value 64})")
@@ -33,11 +35,18 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if args.short_connection:
+        if args.load:
+            print("Error: short_connection mode does not support loading", file=sys.stderr)
+            sys.exit(1)
+        if args.P > 1:
+            print("Error: short_connection mode does not support pipeline (pipeline must be 1)", file=sys.stderr)
+            sys.exit(1)
     bm = Benchmark(host=args.h, port=args.p, username=args.u, password=args.a, cluster=args.cluster, cores=args.cores, timeout=30)
     if args.load:
-        bm.load_data(command=args.command, connections=args.c, pipeline=args.P, count=args.n, target=args.t)
+        bm.load_data(command=args.command, connections=args.c, pipeline=args.P, count=args.n, target=args.t, short_connection=args.short_connection)
     else:
-        bm.bench(command=args.command, connections=args.c, pipeline=args.P, count=args.n, target=args.t, seconds=args.s)
+        bm.bench(command=args.command, connections=args.c, pipeline=args.P, count=args.n, target=args.t, seconds=args.s, short_connection=args.short_connection)
 
 
 if __name__ == "__main__":
