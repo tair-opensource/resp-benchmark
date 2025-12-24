@@ -156,8 +156,8 @@ fn wait_finish(case: &Case, mut auto_connection: AutoConnection, mut context: Sh
                     } else {
                         println!("\x1B[F\x1B[2Kqps: {:.0}(overall {:.0}), conn: {}, {}", qps, result.qps, conn, histogram);
                     }
+                    std::io::stdout().flush().unwrap();
                 }
-                std::io::stdout().flush().unwrap();
                 log_last_cnt = cnt;
                 log_instance = std::time::Instant::now();
             }
@@ -171,11 +171,13 @@ fn wait_finish(case: &Case, mut auto_connection: AutoConnection, mut context: Sh
             }
         }
         let conn: u64 = auto_connection.active_conn();
-        if context.is_loading {
-            println!("\x1B[F\x1B[2KData loaded, qps: {:.0}, time elapsed: {:.2}s\n", result.qps, overall_time.elapsed().as_secs_f64());
-        } else {
-            println!("\x1B[F\x1B[2Kqps: {:.0}, conn: {}, {}\n", result.qps, conn, histogram)
-        };
+        if !quiet {
+            if context.is_loading {
+                println!("\x1B[F\x1B[2KData loaded, qps: {:.0}, time elapsed: {:.2}s\n", result.qps, overall_time.elapsed().as_secs_f64());
+            } else {
+                println!("\x1B[F\x1B[2Kqps: {:.0}, conn: {}, {}\n", result.qps, conn, histogram)
+            };
+        }
         result.avg_latency_ms = histogram.avg() as f64 / 1_000.0;
         result.p99_latency_ms = histogram.percentile(0.99) as f64 / 1_000.0;
         result.connections = conn;
