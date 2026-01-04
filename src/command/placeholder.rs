@@ -1,9 +1,11 @@
+use crate::command::distribution::DistributionEnum;
+use crate::command::{CommandGenerator, parser};
+use rand::distributions::Alphanumeric;
+use rand::prelude::*;
 use std::cmp::min;
 use std::process::exit;
-use crate::command::distribution::DistributionEnum;
 use std::str::FromStr;
-use rand::prelude::*;
-use rand::distributions::Alphanumeric;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
 pub enum PlaceholderEnum {
@@ -157,3 +159,69 @@ impl PlaceholderRange {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct PlaceholderGenerator {
+    str: String,
+    argv: Vec<PlaceholderEnum>,
+    lock: Arc<Mutex<()>>,
+}
+
+impl PlaceholderGenerator {
+    pub fn new(cmd: &str) -> PlaceholderGenerator {
+        let prev_cmd = cmd;
+        match parser::parse_all(cmd) {
+            Ok((nm, args)) => {
+                assert_eq!(nm, "");
+                PlaceholderGenerator {
+                    str: prev_cmd.to_string(),
+                    argv: args,
+                    lock: Arc::new(Mutex::new(())),
+                }
+            }
+            Err(e) => {
+                panic!("cmd parse error. cmd: {}, error: {:?}", cmd, e);
+            }
+        }
+    }
+}
+
+impl CommandGenerator for PlaceholderGenerator {
+    fn gen_cmd(&mut self) -> redis::Cmd {
+        let mut cmd = redis::Cmd::new();
+        let mut cmd_str = String::new();
+        for ph in self.argv.iter_mut() {
+            for arg in ph.generate() {
+                cmd_str.push_str(&arg);
+            }
+        }
+        for word in cmd_str.split_whitespace() {
+            cmd.arg(word);
+        }
+        cmd
+    }
+
+    fn gen_cmd_with_lock(&mut self) -> redis::Cmd {
+        let _lock = self.lock.lock().unwrap();
+        let mut cmd = redis::Cmd::new();
+        let mut cmd_str = String::new();
+        for ph in self.argv.iter_mut() {
+            for arg in ph.generate() {
+                cmd_str.push_str(&arg);
+            }
+        }
+        for word in cmd_str.split_whitespace() {
+            cmd.arg(word);
+        }
+        cmd
+    }
+    
+    fn clone_box(&self) -> Box<dyn CommandGenerator> {
+        Box::new(self.clone())
+    }
+}
+
+impl std::string::ToString for PlaceholderGenerator {
+    fn to_string(&self) -> String {
+        self.str.clone()
+    }
+}

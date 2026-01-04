@@ -8,19 +8,32 @@ use tokio::{select, task};
 use crate::BenchmarkResult;
 use crate::auto_connection::{AutoConnection, ConnLimiter};
 use crate::client::ClientConfig;
-use crate::command::Command;
+use crate::command::CommandGenerator;
 use crate::shared_context::SharedContext;
 use governor::{DefaultDirectRateLimiter, Jitter, Quota};
 
-#[derive(Clone)]
 pub struct Case {
-    pub command: Command,
+    pub command: Box<dyn CommandGenerator>,
     pub connections: u64,
     pub count: u64,
     pub target: u64,
     pub seconds: u64,
     pub pipeline: u64,
     pub short_connection: bool,
+}
+
+impl Clone for Case {
+    fn clone(&self) -> Self {
+        Self {
+            command: self.command.clone_box(),
+            connections: self.connections,
+            count: self.count,
+            target: self.target,
+            seconds: self.seconds,
+            pipeline: self.pipeline,
+            short_connection: self.short_connection,
+        }
+    }
 }
 
 async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limiter: Arc<Option<DefaultDirectRateLimiter>>, config: ClientConfig, case: Case, context: SharedContext) {
@@ -32,7 +45,7 @@ async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limit
         let case = case.clone();
         let mut context = context.clone();
         local.spawn_local(async move {
-            let mut cmd = case.command.clone();
+            let mut cmd = case.command.clone_box();
             let conn_limiter = conn_limiter.clone();
             select! {
                 _ = conn_limiter.wait_new_conn() =>{}
