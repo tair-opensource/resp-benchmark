@@ -21,6 +21,7 @@ A high-performance benchmark tool for testing databases that support the RESP (R
 - **Cluster Support**: Native Redis cluster mode support
 - **Python Integration**: Use as both CLI tool and Python library
 - **Comprehensive Metrics**: Detailed latency histograms and performance statistics
+- **Lua Script Support**: Use Lua scripts to generate complex test commands
 
 ## Installation
 
@@ -44,6 +45,12 @@ resp-benchmark -s 10 "GET {key uniform 100000}"
 
 # With custom connections and pipeline
 resp-benchmark -c 128 -P 10 -s 30 "SET {key uniform 1000000} {value 128}"
+
+# Using Lua script
+resp-benchmark --lua -s 10 "local key = bench.key(10000, 'uniform', 'test'); function generate() return {'SET', key(), bench.value(64)()} end"
+
+# Using Lua script file
+resp-benchmark --lua-file -s 10 workloads/hello.lua
 ```
 
 ### Python Library Usage
@@ -71,6 +78,18 @@ result = bm.bench(
 print(f"QPS: {result.qps}")
 print(f"Avg Latency: {result.avg_latency_ms}ms")
 print(f"P99 Latency: {result.p99_latency_ms}ms")
+
+# Using Lua script
+lua_script = """
+local user_id = bench.key(10000, "uniform", "user_id")
+local data = bench.value(64)
+function generate()
+    key = user_id()
+    value = data()
+    return { "SET", key, value }
+end
+"""
+result = bm.bench(command=lua_script, seconds=30, connections=64, use_lua=True)
 ```
 
 ## Command Syntax
@@ -124,6 +143,110 @@ HSET {key uniform 1000} {key uniform 100} {value 64}
 HGET {key uniform 1000} {key uniform 100}
 ```
 
+## Lua Script Support
+
+resp-benchmark now supports using Lua scripts to generate more complex test commands.
+
+### Lua API
+
+In Lua scripts, you can access the following functions through the global `bench` object:
+
+#### `bench.key(range, distribution, name)`
+Creates a key generator:
+- `range`: Key range (0 to range-1)
+- `distribution`: Distribution type ("uniform", "sequence", "zipfian")
+- `name`: Generator name (used to share state between multiple script instances). Generators with the same name will share state.
+
+Returns a callable function that generates the next key each time it's called.
+
+#### `bench.value(size)`
+Creates a value generator:
+- `size`: Length of the random string to generate (in bytes)
+
+Returns a callable function that generates a random string of the specified length each time it's called.
+
+#### `bench.rand(range)`
+Creates a random number generator:
+- `range`: Random number range (0 to range-1)
+
+Returns a callable function that generates a random integer each time it's called.
+
+#### `json.encode(data)`
+Converts a Lua table to a JSON string.
+
+### Lua Script Requirements
+
+Each Lua script must define a global function named `generate` that takes no parameters and returns an array of strings representing a Redis command.
+
+```lua
+function generate()
+    -- Command generation logic
+    return { "COMMAND", "arg1", "arg2", ... }
+end
+```
+
+### Lua Examples
+
+#### Basic Example
+```lua
+local key_gen = bench.key(10000, "uniform", "my_key")
+local value_gen = bench.value(64)
+function generate()
+    return { "SET", key_gen(), value_gen() }
+end
+```
+
+#### Conditional Logic Example
+```lua
+local key_gen = bench.key(10000, "uniform", "cond_key")
+local value_gen = bench.value(64)
+local rand_gen = bench.rand(100)
+function generate()
+    local key = key_gen()
+    local value = value_gen()
+    local num = rand_gen()
+    
+    if num < 50 then
+        return { "SET", key, value }
+    else
+        return { "GET", key }
+    end
+end
+```
+
+#### Complex Data Structure Example
+```lua
+local key_gen = bench.key(1000, "uniform", "hash_key")
+local field_gen = bench.key(100, "zipfian", "hash_field")
+local value_gen = bench.value(32)
+function generate()
+    local key = key_gen()
+    local field = field_gen()
+    local value = value_gen()
+    
+    return { "HSET", key, field, value }
+end
+```
+
+#### JSON Encoding Example
+```lua
+local key_gen = bench.key(1000, "uniform", "json_key")
+local id_rand = bench.rand(10000)
+local name_rand = bench.rand(1000)
+local score_rand = bench.rand(100)
+function generate()
+    local data = {
+        id = id_rand(),
+        name = "user_" .. name_rand(),
+        score = score_rand()
+    }
+    local json_str = json.encode(data)
+    local key = key_gen()
+    
+    return { "SET", key, json_str }
+end
+```
+
 ## Command Line Options
 
 | Option | Description | Default |
@@ -140,6 +263,8 @@ HGET {key uniform 1000} {key uniform 100}
 | `--cores` | CPU cores to use (comma-separated) | all |
 | `--cluster` | Enable cluster mode | false |
 | `--load` | Load data only, no benchmark | false |
+| `--lua` | Use Lua script for generating random command | false |
+| `--lua-file` | Use Lua script file for generating random command | false |
 
 ## Advanced Features
 
@@ -356,6 +481,18 @@ result = bm.bench(
     connections=64,
     pipeline=10
 )
+
+# Using Lua script
+lua_script = """
+local user_id = bench.key(10000, "uniform", "user_id")
+local data = bench.value(64)
+function generate()
+    key = user_id()
+    value = data()
+    return { "SET", key, value }
+end
+"""
+result = bm.bench(command=lua_script, seconds=30, connections=64, use_lua=True)
 ```
 
 ### Result Analysis

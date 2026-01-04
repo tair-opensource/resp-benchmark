@@ -73,6 +73,7 @@ class Benchmark:
             seconds: int = 0,
             quiet: bool = False,
             short_connection: bool = False,
+            use_lua: bool = False,
     ) -> Result:
         """
         Runs a benchmark test with the specified parameters.
@@ -86,6 +87,7 @@ class Benchmark:
             seconds (int): The duration of the test in seconds.
             quiet: (bool): Whether to suppress output.
             short_connection (bool): If True, create a new connection for each command and close it after use.
+            use_lua (bool): If True, use lua script for generating random command.
         Returns:
             Result: The results of the benchmark test.
         """
@@ -111,6 +113,7 @@ class Benchmark:
             load=False,
             quiet=quiet,
             short_connection=short_connection,
+            use_lua=use_lua,
         )
         result = Result(
             qps=ret.qps,
@@ -121,7 +124,7 @@ class Benchmark:
 
         return result
 
-    def load_data(self, command: str, count: int, target: int = 0, connections: int = 128, pipeline: int = 10, quiet: bool = False, short_connection: bool = False):
+    def load_data(self, command: str, count: int, target: int = 0, connections: int = 128, pipeline: int = 10, quiet: bool = False, short_connection: bool = False, use_lua: bool = False):
         """
         Load data into the Redis server using the specified command.
 
@@ -133,6 +136,7 @@ class Benchmark:
             pipeline (int): The number of commands to pipeline
             quiet: (bool): Whether to suppress output.
             short_connection (bool): If True, create a new connection for each command and close it after use.
+            use_lua (bool): If True, use lua script for generating random command.
         """
         if short_connection:
             raise ValueError("short_connection mode does not support loading")
@@ -157,6 +161,7 @@ class Benchmark:
             load=True,
             quiet=quiet,
             short_connection=short_connection,
+            use_lua=use_lua,
         )
 
     def flushall(self):

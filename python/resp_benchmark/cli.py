@@ -26,6 +26,8 @@ def parse_args():
     parser.add_argument("--load", action="store_true", help="Only load data to Redis, no benchmark.")
     parser.add_argument("--short-connection", action="store_true", help="Create a new connection for each command and close it after use.")
     parser.add_argument('-v', '--version', action='version', version=version('resp_benchmark'))
+    parser.add_argument("--lua", action="store_true", help="Use lua script for generating random command")
+    parser.add_argument("--lua-file", action="store_true", help="Use lua script file for generating random command")
     parser.add_argument("--help", action="help", help="Output this help and exit.")
     parser.add_argument("command", type=str, default="SET {key uniform 100000} {value 64}", nargs="?", help="The Redis command to benchmark (default SET {key uniform 100000} {value 64})")
 
@@ -43,10 +45,15 @@ def main():
             print("Error: short_connection mode does not support pipeline (pipeline must be 1)", file=sys.stderr)
             sys.exit(1)
     bm = Benchmark(host=args.h, port=args.p, username=args.u, password=args.a, cluster=args.cluster, cores=args.cores, timeout=30)
+
+    if args.lua_file:
+        args.command = open(args.command).read()
+        args.lua = True
+
     if args.load:
-        bm.load_data(command=args.command, connections=args.c, pipeline=args.P, count=args.n, target=args.t, short_connection=args.short_connection)
+        bm.load_data(command=args.command, connections=args.c, pipeline=args.P, count=args.n, target=args.t, short_connection=args.short_connection, use_lua=args.lua)
     else:
-        bm.bench(command=args.command, connections=args.c, pipeline=args.P, count=args.n, target=args.t, seconds=args.s, short_connection=args.short_connection)
+        bm.bench(command=args.command, connections=args.c, pipeline=args.P, count=args.n, target=args.t, seconds=args.s, short_connection=args.short_connection, use_lua=args.lua)
 
 
 if __name__ == "__main__":

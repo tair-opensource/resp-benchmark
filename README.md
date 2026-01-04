@@ -17,6 +17,7 @@
 - 支持 Redis 集群模式
 - 提供 CLI 工具和 Python 库接口
 - 内置 QPS 限流控制
+- **Lua 脚本支持**：使用 Lua 脚本生成复杂的测试命令
 
 ## 安装
 
@@ -40,6 +41,12 @@ resp-benchmark -s 10 "GET {key uniform 100000}"
 
 # 自定义连接数和管道
 resp-benchmark -c 128 -P 10 -s 30 "SET {key uniform 1000000} {value 128}"
+
+# 使用 Lua 脚本
+resp-benchmark --lua -s 10 "local key = bench.key(10000, 'uniform', 'test'); function generate() return {'SET', key(), bench.value(64)()} end"
+
+# 使用 Lua 脚本文件
+resp-benchmark --lua-file -s 10 workloads/hello.lua
 ```
 
 ### Python 库使用
@@ -67,6 +74,18 @@ result = bm.bench(
 print(f"QPS: {result.qps}")
 print(f"平均延迟: {result.avg_latency_ms}ms")
 print(f"P99 延迟: {result.p99_latency_ms}ms")
+
+# 使用 Lua 脚本
+lua_script = """
+local user_id = bench.key(10000, "uniform", "user_id")
+local data = bench.value(64)
+function generate()
+    key = user_id()
+    value = data()
+    return { "SET", key, value }
+end
+"""
+result = bm.bench(command=lua_script, seconds=30, connections=64, use_lua=True)
 ```
 
 ## 命令语法
@@ -120,6 +139,110 @@ HSET {key uniform 1000} {key uniform 100} {value 64}
 HGET {key uniform 1000} {key uniform 100}
 ```
 
+## Lua 脚本支持
+
+resp-benchmark 现在支持使用 Lua 脚本来生成更复杂的测试命令。
+
+### Lua API
+
+在 Lua 脚本中，可以通过全局对象 `bench` 访问以下函数：
+
+#### `bench.key(range, distribution, name)`
+创建一个键生成器：
+- `range`: 键的范围（0 到 range-1）
+- `distribution`: 分布类型（"uniform"、"sequence"、"zipfian"）
+- `name`: 生成器名称（用于在多个脚本实例间共享状态），同名生成器将共享状态。
+
+返回一个可调用的函数，每次调用生成下一个键。
+
+#### `bench.value(size)`
+创建一个值生成器：
+- `size`: 生成的随机字符串长度（字节数）
+
+返回一个可调用的函数，每次调用生成指定长度的随机字符串。
+
+#### `bench.rand(range)`
+创建一个随机数生成器：
+- `range`: 随机数范围（0 到 range-1）
+
+返回一个可调用的函数，每次调用生成一个随机整数。
+
+#### `json.encode(data)`
+将 Lua 表转换为 JSON 字符串。
+
+### Lua 脚本要求
+
+每个 Lua 脚本必须定义一个名为 `generate` 的全局函数，该函数不接受参数并返回一个字符串数组，表示 Redis 命令。
+
+```lua
+function generate()
+    -- 生成命令逻辑
+    return { "COMMAND", "arg1", "arg2", ... }
+end
+```
+
+### Lua 示例
+
+#### 基础示例
+```lua
+local key_gen = bench.key(10000, "uniform", "my_key")
+local value_gen = bench.value(64)
+function generate()
+    return { "SET", key_gen(), value_gen() }
+end
+```
+
+#### 带条件逻辑的示例
+```lua
+local key_gen = bench.key(10000, "uniform", "cond_key")
+local value_gen = bench.value(64)
+local rand_gen = bench.rand(100)
+function generate()
+    local key = key_gen()
+    local value = value_gen()
+    local num = rand_gen()
+    
+    if num < 50 then
+        return { "SET", key, value }
+    else
+        return { "GET", key }
+    end
+end
+```
+
+#### 复杂数据结构示例
+```lua
+local key_gen = bench.key(1000, "uniform", "hash_key")
+local field_gen = bench.key(100, "zipfian", "hash_field")
+local value_gen = bench.value(32)
+function generate()
+    local key = key_gen()
+    local field = field_gen()
+    local value = value_gen()
+    
+    return { "HSET", key, field, value }
+end
+```
+
+#### 使用 JSON 编码的示例
+```lua
+local key_gen = bench.key(1000, "uniform", "json_key")
+local id_rand = bench.rand(10000)
+local name_rand = bench.rand(1000)
+local score_rand = bench.rand(100)
+function generate()
+    local data = {
+        id = id_rand(),
+        name = "user_" .. name_rand(),
+        score = score_rand()
+    }
+    local json_str = json.encode(data)
+    local key = key_gen()
+    
+    return { "SET", key, json_str }
+end
+```
+
 ## 命令行选项
 
 | 选项 | 描述 | 默认值 |
@@ -137,6 +260,8 @@ HGET {key uniform 1000} {key uniform 100}
 | `--cluster` | 启用集群模式 | false |
 | `--load` | 仅加载数据，不进行基准测试 | false |
 | `--short-connection` | 短连接模式：每次命令都创建新连接 | false |
+| `--lua` | 使用 Lua 脚本生成随机命令 | false |
+| `--lua-file` | 使用 Lua 脚本文件生成随机命令 | false |
 
 ## 高级特性
 

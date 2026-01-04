@@ -1,15 +1,15 @@
+mod async_flag;
+mod auto_connection;
 mod bench;
 mod client;
 mod command;
-mod auto_connection;
-mod shared_context;
 mod histogram;
-mod async_flag;
+mod shared_context;
 
+use crate::command::{LuaGenerator, PlaceholderGenerator};
 use ctrlc;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
-use crate::command::Command;
 
 /// A Python module implemented in Rust.
 #[pymodule]
@@ -17,7 +17,6 @@ fn _resp_benchmark_rust_lib(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(benchmark, m)?)?;
     Ok(())
 }
-
 
 #[pyclass]
 #[derive(Default, Copy, Clone)]
@@ -48,6 +47,7 @@ fn benchmark(
     load: bool,
     quiet: bool,
     short_connection: bool,
+    use_lua: bool,
 ) -> PyResult<BenchmarkResult> {
     assert!(cores.len() > 0);
     if load {
@@ -71,7 +71,7 @@ fn benchmark(
         timeout,
     };
     let case = bench::Case {
-        command: Command::new(command.as_str()),
+        command: if use_lua { Box::new(LuaGenerator::new(command.as_str())) } else { Box::new(PlaceholderGenerator::new(command.as_str())) },
         connections,
         pipeline,
         count,
