@@ -1,189 +1,194 @@
 # resp-benchmark
 
-[![Python - Version](https://img.shields.io/badge/python-%3E%3D3.8-brightgreen)](https://www.python.org/doc/versions/)
-[![PyPI - Version](https://img.shields.io/pypi/v/resp-benchmark?color=%231772b4)](https://pypi.org/project/resp-benchmark/)
-[![PyPI - Downloads](https://img.shields.io/pypi/dw/resp-benchmark?color=%231ba784)](https://pypi.org/project/resp-benchmark/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/tair-opensource/resp-benchmark/blob/main/LICENSE)
+<p align="center">
+  <strong>A high-performance benchmark tool for Redis, Valkey, Tair, and any RESP-compatible database</strong>
+</p>
 
-[English](README_en.md) | 中文
+<p align="center">
+  Built with Rust for maximum throughput &bull; Python bindings for ease of use
+</p>
 
-一个基于 Rust 构建的 RESP (Redis 序列化协议) 数据库基准测试工具，提供 Python 绑定。用于测试 Redis、Valkey、Tair 等 RESP 兼容数据库的性能。
+<p align="center">
+  <a href="https://pypi.org/project/resp-benchmark/">
+    <img src="https://img.shields.io/pypi/v/resp-benchmark?color=%231772b4&label=PyPI&logo=pypi" alt="PyPI Version">
+  </a>
+  <a href="https://pypi.org/project/resp-benchmark/">
+    <img src="https://img.shields.io/pypi/dw/resp-benchmark?color=%231ba784&label=Downloads&logo=pypi" alt="PyPI Downloads">
+  </a>
+  <a href="https://github.com/tair-opensource/resp-benchmark/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/tair-opensource/resp-benchmark?color=blue" alt="License">
+  </a>
+  <a href="https://github.com/tair-opensource/resp-benchmark/stargazers">
+    <img src="https://img.shields.io/github/stars/tair-opensource/resp-benchmark?style=social" alt="GitHub Stars">
+  </a>
+</p>
 
-## 主要功能
+<p align="center">
+  English | <a href="README_zh.md">中文</a>
+</p>
 
-- 支持自定义命令模板和占位符
-- 多线程并发测试
-- 支持连接池和管道操作
-- 支持 Redis 集群模式
-- 提供 CLI 工具和 Python 库接口
-- 内置 QPS 限流控制
-- **Lua 脚本支持**：使用 Lua 脚本生成复杂的测试命令
+---
 
-## 安装
+## Why not redis-benchmark?
 
-需要 Python 3.9 或更高版本。
+`redis-benchmark` is the built-in benchmarking tool shipped with Redis. It works for quick smoke tests, but its design leads to **unrealistic results** in many scenarios. `resp-benchmark` was built to address these limitations:
+
+| | redis-benchmark | resp-benchmark |
+|---|---|---|
+| **Data per request** | Sends the **same bytes** every time. For example, `redis-benchmark -t SET` writes the same value to every key — this is fundamentally different from real-world traffic, where each key typically stores a distinct value of varying size. Results from identical data cannot reflect how the server performs under diverse, production-like payloads. | Each request generates **different keys and values** through placeholders like `{key uniform 100000} {value 64}`, closely matching real-world traffic patterns and producing more meaningful benchmark numbers. |
+| **Key access pattern** | Limited to sequential numbering with the `-r` flag. No way to simulate hot-key workloads or realistic read patterns. | Three built-in distributions: **uniform** (equal probability), **zipfian** (hot keys, exponent 1.03, simulating production cache access), and **sequence** (ordered, ideal for bulk loading). |
+| **Command flexibility** | Limited to a small set of predefined commands via the `-t` flag (e.g., `SET`, `GET`, `LPUSH`). Cannot freely compose arguments, test custom commands, or benchmark module commands. | Commands are written directly by the user — any RESP command can be tested as-is, including module commands, `EVALSHA`, and multi-argument commands. Combined with placeholders and Lua scripts, you can implement conditional branching, JSON encoding, and other complex scenarios. |
+| **Cluster mode** | Sends all requests through a single slot because it uses a fixed key. Only one node in the cluster does real work; the benchmark number reflects single-node performance, not cluster throughput. | Generates varied keys that distribute evenly across **all hash slots**, so every node in the cluster receives proportional traffic. You measure actual cluster-wide throughput. |
+| **Python API** | CLI only. Hard to integrate into automated test pipelines or compare results programmatically. | Full Python library (`from resp_benchmark import Benchmark`), making it easy to script multi-stage benchmarks, run in CI/CD, and analyze results in code. |
+| **Lua scripting** | Not available. | Lua scripts with `bench.key()`, `bench.value()`, `bench.rand()` for dynamic command generation with conditional logic, JSON encoding, and more. |
+| **Connection tuning** | You must guess the right `-c` value. Too few connections under-utilizes the server; too many wastes resources on context switching. | **Auto-scaling** (`-c 0`): starts with 1 connection, doubles until throughput stops increasing, then locks in the optimal count. No manual tuning needed. |
+| **Short connection** | Not available. | `--short-connection` mode creates and tears down a TCP connection for **every command**, measuring connection establishment overhead — critical for proxy and connection-pool testing. |
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Command Syntax](#command-syntax)
+- [Lua Script Support](#lua-script-support)
+- [Command Line Options](#command-line-options)
+- [Advanced Features](#advanced-features)
+- [Performance Tips](#performance-tips)
+- [Examples](#examples)
+- [Python Library API](#python-library-api)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Installation
 
 ```bash
 pip install resp-benchmark
 ```
 
-## 快速开始
+Requires Python 3.9+. Prebuilt wheels are available for macOS and Linux.
 
-### 命令行使用
+## Quick Start
+
+### Command Line
 
 ```bash
-# 基础基准测试
+# Basic benchmark: SET random keys with 64-byte values for 10 seconds
 resp-benchmark -s 10 "SET {key uniform 100000} {value 64}"
 
-# 加载数据然后测试
+# Load 1M key-value pairs, then benchmark reads
 resp-benchmark --load -n 1000000 "SET {key sequence 100000} {value 64}"
 resp-benchmark -s 10 "GET {key uniform 100000}"
 
-# 自定义连接数和管道
+# 128 connections, pipeline depth 10, run 30 seconds
 resp-benchmark -c 128 -P 10 -s 30 "SET {key uniform 1000000} {value 128}"
 
-# 使用 Lua 脚本
+# Using Lua script inline
 resp-benchmark --lua -s 10 "local key = bench.key(10000, 'uniform', 'test'); function generate() return {'SET', key(), bench.value(64)()} end"
 
-# 使用 Lua 脚本文件
+# Using Lua script file
 resp-benchmark --lua-file -s 10 workloads/hello.lua
 ```
 
-### Python 库使用
+### Python Library
 
 ```python
 from resp_benchmark import Benchmark
 
-# 初始化基准测试
 bm = Benchmark(host="127.0.0.1", port=6379)
 
-# 加载测试数据
+# Load test data
 bm.load_data(
-    command="SET {key sequence 1000000} {value 64}", 
-    count=1000000, 
+    command="SET {key sequence 1000000} {value 64}",
+    count=1000000,
     connections=128
 )
 
-# 运行基准测试
+# Run benchmark
 result = bm.bench(
-    command="GET {key uniform 1000000}", 
-    seconds=30, 
+    command="GET {key uniform 1000000}",
+    seconds=30,
     connections=64
 )
 
 print(f"QPS: {result.qps}")
-print(f"平均延迟: {result.avg_latency_ms}ms")
-print(f"P99 延迟: {result.p99_latency_ms}ms")
-
-# 使用 Lua 脚本
-lua_script = """
-local user_id = bench.key(10000, "uniform", "user_id")
-local data = bench.value(64)
-function generate()
-    key = user_id()
-    value = data()
-    return { "SET", key, value }
-end
-"""
-result = bm.bench(command=lua_script, seconds=30, connections=64, use_lua=True)
+print(f"Avg Latency: {result.avg_latency_ms}ms")
+print(f"P99 Latency: {result.p99_latency_ms}ms")
 ```
 
-## 命令语法
+## Command Syntax
 
-resp-benchmark 使用强大的占位符系统来生成多样化和真实的测试数据：
+resp-benchmark uses a placeholder system to generate varied, realistic test data. Placeholders are enclosed in `{}` within the command string.
 
-### 键占位符
+### Key Placeholders
 
-- **`{key uniform N}`**: 从 0 到 N-1 的随机键
-  - 示例: `{key uniform 100000}` → `key_0000099999`
-  
-- **`{key sequence N}`**: 从 0 到 N-1 的顺序键（适用于加载数据）
-  - 示例: `{key sequence 100000}` → `key_0000000000`, `key_0000000001`, ...
-  
-- **`{key zipfian N}`**: Zipfian 分布键（模拟真实世界的访问模式）
-  - 示例: `{key zipfian 100000}` → 遵循指数为 1.03 的 Zipfian 分布
+| Placeholder | Description | Example |
+|---|---|---|
+| `{key uniform N}` | Random key from `key_0000000000` to `key_{N-1}`, each equally likely | `{key uniform 100000}` → `key_0000042371` |
+| `{key sequence N}` | Sequential key from 0 to N-1, wrapping around. Ideal for loading data because each key is written exactly once before repeating. | `{key sequence 100000}` → `key_0000000000`, `key_0000000001`, ... |
+| `{key zipfian N}` | Zipfian distribution (exponent 1.03): a small fraction of keys receive most requests, simulating real-world cache access patterns. | `{key zipfian 100000}` → frequently `key_0000000001`, rarely `key_0000099999` |
 
-### 值占位符
+### Value Placeholders
 
-- **`{value N}`**: N 字节的随机字符串
-  - 示例: `{value 64}` → `a8x9mK2p...` (64 字节)
-  
-- **`{rand N}`**: 0 到 N-1 的随机数
-  - 示例: `{rand 1000}` → `742`
-  
-- **`{range N W}`**: 范围 N 内相差 W 的两个数字
-  - 示例: `{range 100 10}` → `45 55`
+| Placeholder | Description | Example |
+|---|---|---|
+| `{value N}` | Random alphanumeric string of N bytes, different on every request | `{value 64}` → `a8x9mK2pQ7...` (64 bytes) |
+| `{rand N}` | Random integer from 0 to N-1 | `{rand 1000}` → `742` |
+| `{range N W}` | Two integers: a random start in [0, N-1] and start+W (clamped to N-1). Useful for range queries. | `{range 1000 10}` → `45 55` |
 
-### 命令示例
+### Example Commands
 
 ```bash
-# 字符串操作
+# String operations
 SET {key uniform 1000000} {value 64}
 GET {key uniform 1000000}
 INCR {key uniform 100000}
 
-# 列表操作
+# List operations
 LPUSH {key uniform 1000} {value 64}
 LINDEX {key uniform 1000} {rand 100}
 
-# 集合操作
+# Set operations
 SADD {key uniform 1000} {value 64}
 SISMEMBER {key uniform 1000} {value 64}
 
-# 有序集合操作
+# Sorted Set operations
 ZADD {key uniform 1000} {rand 1000} {value 64}
 ZRANGEBYSCORE {key uniform 1000} {range 1000 100}
 
-# 哈希操作
+# Hash operations
 HSET {key uniform 1000} {key uniform 100} {value 64}
 HGET {key uniform 1000} {key uniform 100}
 ```
 
-## Lua 脚本支持
+## Lua Script Support
 
-resp-benchmark 现在支持使用 Lua 脚本来生成更复杂的测试命令。
+For commands that require dynamic logic (conditional branching, computed fields, JSON payloads), use Lua scripts instead of simple placeholders.
 
 ### Lua API
 
-在 Lua 脚本中，可以通过全局对象 `bench` 访问以下函数：
+The global `bench` object provides generator functions:
 
-#### `bench.key(range, distribution, name)`
-创建一个键生成器：
-- `range`: 键的范围（0 到 range-1）
-- `distribution`: 分布类型（"uniform"、"sequence"、"zipfian"）
-- `name`: 生成器名称（用于在多个脚本实例间共享状态），同名生成器将共享状态。
+**`bench.key(range, distribution, name)`** — Creates a key generator. `distribution` is `"uniform"`, `"sequence"`, or `"zipfian"`. `name` identifies the generator; generators with the same name share state across threads, ensuring sequence generators don't produce duplicates.
 
-返回一个可调用的函数，每次调用生成下一个键。
+**`bench.value(size)`** — Creates a generator that produces a random alphanumeric string of `size` bytes on each call.
 
-#### `bench.value(size)`
-创建一个值生成器：
-- `size`: 生成的随机字符串长度（字节数）
+**`bench.rand(range)`** — Creates a generator that returns a random integer in [0, range-1] on each call.
 
-返回一个可调用的函数，每次调用生成指定长度的随机字符串。
+**`json.encode(data)`** — Converts a Lua table to a JSON string.
 
-#### `bench.rand(range)`
-创建一个随机数生成器：
-- `range`: 随机数范围（0 到 range-1）
+### Script Structure
 
-返回一个可调用的函数，每次调用生成一个随机整数。
-
-#### `json.encode(data)`
-将 Lua 表转换为 JSON 字符串。
-
-### Lua 脚本要求
-
-每个 Lua 脚本必须定义一个名为 `generate` 的全局函数，该函数不接受参数并返回一个字符串数组，表示 Redis 命令。
+Every Lua script must define a global `generate` function that returns an array of strings representing a Redis command:
 
 ```lua
 function generate()
-    -- 生成命令逻辑
     return { "COMMAND", "arg1", "arg2", ... }
 end
 ```
 
-### Lua 示例
+### Examples
 
-#### 基础示例
+#### Basic SET
+
 ```lua
 local key_gen = bench.key(10000, "uniform", "my_key")
 local value_gen = bench.value(64)
@@ -192,7 +197,8 @@ function generate()
 end
 ```
 
-#### 带条件逻辑的示例
+#### Mixed Read/Write (50/50)
+
 ```lua
 local key_gen = bench.key(10000, "uniform", "cond_key")
 local value_gen = bench.value(64)
@@ -201,7 +207,7 @@ function generate()
     local key = key_gen()
     local value = value_gen()
     local num = rand_gen()
-    
+
     if num < 50 then
         return { "SET", key, value }
     else
@@ -210,21 +216,19 @@ function generate()
 end
 ```
 
-#### 复杂数据结构示例
+#### Hash Operations
+
 ```lua
 local key_gen = bench.key(1000, "uniform", "hash_key")
 local field_gen = bench.key(100, "zipfian", "hash_field")
 local value_gen = bench.value(32)
 function generate()
-    local key = key_gen()
-    local field = field_gen()
-    local value = value_gen()
-    
-    return { "HSET", key, field, value }
+    return { "HSET", key_gen(), field_gen(), value_gen() }
 end
 ```
 
-#### 使用 JSON 编码的示例
+#### JSON Payloads
+
 ```lua
 local key_gen = bench.key(1000, "uniform", "json_key")
 local id_rand = bench.rand(10000)
@@ -237,289 +241,223 @@ function generate()
         score = score_rand()
     }
     local json_str = json.encode(data)
-    local key = key_gen()
-    
-    return { "SET", key, json_str }
+    return { "SET", key_gen(), json_str }
 end
 ```
 
-## 命令行选项
+## Command Line Options
 
-| 选项 | 描述 | 默认值 |
-|------|------|--------|
-| `-h` | 服务器主机名 | 127.0.0.1 |
-| `-p` | 服务器端口 | 6379 |
-| `-u` | 认证用户名 | "" |
-| `-a` | 认证密码 | "" |
-| `-c` | 连接数（0 为自动） | 0 |
-| `-n` | 总请求数（0 为无限） | 0 |
-| `-s` | 持续时间（秒）（0 为无限） | 0 |
-| `-t` | 目标 QPS（0 为无限） | 0 |
-| `-P` | 管道深度 | 1 |
-| `--cores` | 使用的 CPU 核心（逗号分隔） | 全部 |
-| `--cluster` | 启用集群模式 | false |
-| `--load` | 仅加载数据，不进行基准测试 | false |
-| `--short-connection` | 短连接模式：每次命令都创建新连接 | false |
-| `--lua` | 使用 Lua 脚本生成随机命令 | false |
-| `--lua-file` | 使用 Lua 脚本文件生成随机命令 | false |
+| Option | Description | Default |
+|---|---|---|
+| `-h` | Server hostname | 127.0.0.1 |
+| `-p` | Server port | 6379 |
+| `-u` | Username for ACL authentication | "" |
+| `-a` | Password for authentication | "" |
+| `-c` | Number of connections (0 = auto-scaling) | 0 |
+| `-n` | Total number of requests (0 = unlimited) | 0 |
+| `-s` | Duration in seconds (0 = unlimited) | 0 |
+| `-t` | Target QPS (0 = unlimited) | 0 |
+| `-P` | Pipeline depth | 1 |
+| `--cores` | CPU cores to use (comma-separated, e.g. `0,1,2,3`) | all |
+| `--cluster` | Enable Redis cluster mode | false |
+| `--load` | Load data only, skip benchmarking | false |
+| `--short-connection` | Create a new connection for each command | false |
+| `--lua` | Treat the command string as a Lua script | false |
+| `--lua-file` | Treat the command string as a path to a Lua script file | false |
+| `-q` | Quiet mode: suppress progress output | false |
 
-## 高级特性
+## Advanced Features
 
-### 连接自动扩展
+### Connection Auto-scaling
 
-当指定 `-c 0` 时，resp-benchmark 根据系统资源和目标 QPS 自动确定最优连接数。
-
-### CPU 核心绑定
-
-将基准测试线程绑定到特定 CPU 核心以获得一致的性能：
+When `-c 0` (the default), resp-benchmark starts with a small number of connections and progressively doubles them. Once doubling no longer increases throughput (QPS growth < 30%), the connection count is locked in and the real benchmark begins. This finds the optimal connection count automatically.
 
 ```bash
-# 使用核心 0, 1, 2, 3
+resp-benchmark -c 0 -s 30 "GET {key uniform 100000}"
+```
+
+### CPU Core Affinity
+
+Pin benchmark threads to specific CPU cores to reduce context-switch jitter and get more stable results:
+
+```bash
 resp-benchmark --cores 0,1,2,3 -s 10 "SET {key uniform 100000} {value 64}"
 ```
 
-### 速率限制
+### Rate Limiting
 
-控制请求速率进行渐进式负载测试：
+Control request rate for gradual load testing. Useful for finding the QPS threshold where latency spikes:
 
 ```bash
-# 目标 10,000 QPS
 resp-benchmark -t 10000 -s 30 "SET {key uniform 100000} {value 64}"
 ```
 
-### 管道操作
+### Pipeline
 
-使用管道进行批量操作：
+Send multiple commands per round-trip to maximize throughput. Higher pipeline depth reduces per-command latency overhead but increases per-batch latency:
 
 ```bash
-# 每个连接管道 10 个请求
 resp-benchmark -P 10 -c 128 -s 30 "SET {key uniform 100000} {value 64}"
 ```
 
-### 集群模式
+### Cluster Mode
 
-使用自动槽位分布测试 Redis 集群：
+Automatically distribute requests across all cluster nodes based on key hash slots:
 
 ```bash
 resp-benchmark --cluster -h cluster-endpoint -p 7000 -s 30 "SET {key uniform 100000} {value 64}"
 ```
 
-## 性能优化
+### Short Connection Mode
 
-### 最佳实践
+Create and close a TCP connection for every single command. This measures connection establishment overhead, which is important when benchmarking proxies (like Twemproxy, Codis) or connection pooling layers.
 
-1. **预加载数据**: 使用 `--load` 在基准测试前填充测试数据
-2. **适当的连接数**: 从 `-c 128` 开始，根据结果调整
-3. **键分布**: 读取使用 `uniform`，写入使用 `sequence`
-4. **明智使用管道**: 批量操作使用 `-P 10`，延迟测试使用 `-P 1`
-5. **清洁状态**: 测试之间清除数据以避免干扰
-
-### 示例工作流程
+Limitations: not compatible with `--load`; pipeline must be 1.
 
 ```bash
-# 1. 清除现有数据
-redis-cli FLUSHALL
-
-# 2. 加载测试数据
-resp-benchmark --load -c 256 -P 10 -n 1000000 "SET {key sequence 100000} {value 64}"
-
-# 3. 使用不同模式进行基准测试
-resp-benchmark -c 128 -s 30 "GET {key uniform 100000}"    # 随机访问
-resp-benchmark -c 128 -s 30 "GET {key zipfian 100000}"    # 真实访问模式
+resp-benchmark --short-connection -c 50 -s 10 "PING"
 ```
 
-## 完整示例
+## Performance Tips
 
-### 字符串操作
+1. **Pre-load data**: Use `--load` with `sequence` keys to populate test data before read benchmarks, so reads don't hit empty keys.
+2. **Start with auto connections**: Let `-c 0` find the optimal count, then hardcode it for reproducible runs.
+3. **Match key distribution to your workload**: Use `uniform` for cache scenarios, `zipfian` for realistic production traffic, `sequence` for bulk imports.
+4. **Pipeline for throughput, no pipeline for latency**: Use `-P 10` when measuring maximum throughput; use `-P 1` when measuring per-command latency.
+5. **Clean state between tests**: Run `FLUSHALL` between test runs to avoid interference.
+
+### Typical Workflow
 
 ```bash
-# 基本 SET/GET
-resp-benchmark --load -n 1000000 "SET {key sequence 100000} {value 64}"
-resp-benchmark -s 10 "GET {key uniform 100000}"
+# 1. Clear existing data
+redis-cli FLUSHALL
 
-# 大值
+# 2. Load 1M key-value pairs
+resp-benchmark --load -c 256 -P 10 -n 1000000 "SET {key sequence 1000000} {value 64}"
+
+# 3. Benchmark different access patterns
+resp-benchmark -c 128 -s 30 "GET {key uniform 1000000}"    # Random access
+resp-benchmark -c 128 -s 30 "GET {key zipfian 1000000}"    # Hot-key access
+```
+
+## Examples
+
+### String Operations
+
+```bash
+resp-benchmark --load -n 1000000 "SET {key sequence 1000000} {value 64}"
+resp-benchmark -s 10 "GET {key uniform 1000000}"
 resp-benchmark -s 10 "SET {key uniform 10000} {value 1024}"
-
-# 递增操作
 resp-benchmark -s 10 "INCR {key uniform 10000}"
 ```
 
-### 列表操作
+### List Operations
 
 ```bash
-# 构建列表
 resp-benchmark --load -n 1000000 "LPUSH {key sequence 1000} {value 64}"
-
-# 随机访问
 resp-benchmark -s 10 "LINDEX {key uniform 1000} {rand 1000}"
-
-# 范围操作
 resp-benchmark -s 10 "LRANGE {key uniform 1000} {range 1000 10}"
 ```
 
-### 集合操作
+### Set Operations
 
 ```bash
-# 填充集合
 resp-benchmark --load -n 1000000 "SADD {key sequence 1000} {key sequence 1000}"
-
-# 测试成员关系
 resp-benchmark -s 10 "SISMEMBER {key uniform 1000} {key uniform 1000}"
 ```
 
-### 有序集合操作
+### Sorted Set Operations
 
 ```bash
-# 添加带分数的成员
 resp-benchmark --load -n 1000000 "ZADD {key sequence 1000} {rand 10000} {key sequence 1000}"
-
-# 分数查询
 resp-benchmark -s 10 "ZSCORE {key uniform 1000} {key uniform 1000}"
-
-# 范围查询
 resp-benchmark -s 10 "ZRANGEBYSCORE {key uniform 1000} {range 10000 100}"
 ```
 
-### 哈希操作
+### Hash Operations
 
 ```bash
-# 填充哈希
 resp-benchmark --load -n 1000000 "HSET {key sequence 1000} {key sequence 100} {value 64}"
-
-# 字段访问
 resp-benchmark -s 10 "HGET {key uniform 1000} {key uniform 100}"
 ```
 
-### Lua 脚本
+### EVALSHA
 
 ```bash
-# 加载脚本
 redis-cli SCRIPT LOAD "return redis.call('SET', KEYS[1], ARGV[1])"
-
-# 基准测试脚本执行
 resp-benchmark -s 10 "EVALSHA d8f2fad9f8e86a53d2a6ebd960b33c4972cacc37 1 {key uniform 100000} {value 64}"
 ```
 
-## 短连接性能测试
+## Python Library API
 
-短连接模式：每次命令都创建新连接，执行完成后立即关闭。
-
-**限制：**
-- 不支持 `--load` 和 `-P`（pipeline 必须为 1）
-
-**使用：**
-```bash
-resp-benchmark --short-connection "PING" -c 50 -s 10
-```
-
-**Python API：**
-```python
-result = bm.bench(command="PING", seconds=30, connections=50, short_connection=True)
-```
-
-
-## Python 库 API
-
-### 初始化
+### Initialization
 
 ```python
 from resp_benchmark import Benchmark
 
-# 基本连接
+# Basic connection
 bm = Benchmark(host="127.0.0.1", port=6379)
 
-# 带认证
-bm = Benchmark(
-    host="redis.example.com",
-    port=6379,
-    username="user",
-    password="pass"
-)
+# With authentication
+bm = Benchmark(host="redis.example.com", port=6379, username="user", password="pass")
 
-# 集群模式
-bm = Benchmark(
-    host="cluster-endpoint",
-    port=7000,
-    cluster=True
-)
+# Cluster mode
+bm = Benchmark(host="cluster-endpoint", port=7000, cluster=True)
 
-# 自定义配置
-bm = Benchmark(
-    host="127.0.0.1",
-    port=6379,
-    cores="0,1,2,3",  # 使用特定核心
-    timeout=30        # 连接超时
-)
+# Pin to specific CPU cores
+bm = Benchmark(host="127.0.0.1", port=6379, cores="0,1,2,3")
 ```
 
-### 加载数据
+### Loading Data
 
 ```python
-# 顺序加载（推荐）
 bm.load_data(
     command="SET {key sequence 1000000} {value 64}",
     count=1000000,
     connections=128,
     pipeline=10
 )
-
-# 带速率限制
-bm.load_data(
-    command="SET {key sequence 1000000} {value 64}",
-    count=1000000,
-    connections=128,
-    target=50000  # 50k QPS
-)
 ```
 
-### 基准测试
+### Benchmarking
 
 ```python
-# 基于时间的基准测试
-result = bm.bench(
-    command="GET {key uniform 1000000}",
-    seconds=30,
-    connections=64
-)
+# Time-based
+result = bm.bench(command="GET {key uniform 1000000}", seconds=30, connections=64)
 
-# 基于计数的基准测试
-result = bm.bench(
-    command="GET {key uniform 1000000}",
-    count=1000000,
-    connections=64
-)
+# Count-based
+result = bm.bench(command="GET {key uniform 1000000}", count=1000000, connections=64)
 
-# 带管道
-result = bm.bench(
-    command="SET {key uniform 1000000} {value 64}",
-    seconds=30,
-    connections=64,
-    pipeline=10
-)
+# With pipeline
+result = bm.bench(command="SET {key uniform 1000000} {value 64}", seconds=30, connections=64, pipeline=10)
 
-# 短连接模式
-result = bm.bench(
-    command="PING",
-    seconds=30,
-    connections=50,
-    short_connection=True
-)
+# Short connection
+result = bm.bench(command="PING", seconds=30, connections=50, short_connection=True)
+
+# Lua script
+lua_script = """
+local user_id = bench.key(10000, "uniform", "user_id")
+local data = bench.value(64)
+function generate()
+    return { "SET", user_id(), data() }
+end
+"""
+result = bm.bench(command=lua_script, seconds=30, connections=64, use_lua=True)
 ```
 
-### 结果分析
+### Result Analysis
 
 ```python
-# 访问基准测试结果
 print(f"QPS: {result.qps:.2f}")
-print(f"平均延迟: {result.avg_latency_ms:.2f}ms")
-print(f"P99 延迟: {result.p99_latency_ms:.2f}ms")
-print(f"使用的连接数: {result.connections}")
+print(f"Avg Latency: {result.avg_latency_ms:.2f}ms")
+print(f"P99 Latency: {result.p99_latency_ms:.2f}ms")
+print(f"Connections: {result.connections}")
 ```
 
-## 贡献
+## Contributing
 
-欢迎贡献！请随时提交拉取请求或开启议题。
+Contributions are welcome! Please feel free to submit pull requests or open issues.
 
-## 许可证
+## License
 
-该项目基于 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
