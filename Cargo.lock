@@ -1043,7 +1043,7 @@ dependencies = [
 
 [[package]]
 name = "resp-benchmark"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "awaitgroup",
  "colored",
