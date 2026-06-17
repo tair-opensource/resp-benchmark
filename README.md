@@ -29,21 +29,6 @@
 
 ---
 
-## Why not redis-benchmark?
-
-`redis-benchmark` is the built-in benchmarking tool shipped with Redis. It works for quick smoke tests, but its design leads to **unrealistic results** in many scenarios. `resp-benchmark` was built to address these limitations:
-
-| | redis-benchmark | resp-benchmark |
-|---|---|---|
-| **Data per request** | Sends the **same bytes** every time. For example, `redis-benchmark -t SET` writes the same value to every key — this is fundamentally different from real-world traffic, where each key typically stores a distinct value of varying size. Results from identical data cannot reflect how the server performs under diverse, production-like payloads. | Each request generates **different keys and values** through placeholders like `{key uniform 100000} {value 64}`, closely matching real-world traffic patterns and producing more meaningful benchmark numbers. |
-| **Key access pattern** | Limited to sequential numbering with the `-r` flag. No way to simulate hot-key workloads or realistic read patterns. | Three built-in distributions: **uniform** (equal probability), **zipfian** (hot keys, exponent 1.03, simulating production cache access), and **sequence** (ordered, ideal for bulk loading). |
-| **Command flexibility** | Limited to a small set of predefined commands via the `-t` flag (e.g., `SET`, `GET`, `LPUSH`). Cannot freely compose arguments, test custom commands, or benchmark module commands. | Commands are written directly by the user — any RESP command can be tested as-is, including module commands, `EVALSHA`, and multi-argument commands. Combined with placeholders and Lua scripts, you can implement conditional branching, JSON encoding, and other complex scenarios. |
-| **Cluster mode** | Sends all requests through a single slot because it uses a fixed key. Only one node in the cluster does real work; the benchmark number reflects single-node performance, not cluster throughput. | Generates varied keys that distribute evenly across **all hash slots**, so every node in the cluster receives proportional traffic. You measure actual cluster-wide throughput. |
-| **Python API** | CLI only. Hard to integrate into automated test pipelines or compare results programmatically. | Full Python library (`from resp_benchmark import Benchmark`), making it easy to script multi-stage benchmarks, run in CI/CD, and analyze results in code. |
-| **Lua scripting** | Not available. | Lua scripts with `bench.key()`, `bench.value()`, `bench.rand()` for dynamic command generation with conditional logic, JSON encoding, and more. |
-| **Connection tuning** | You must guess the right `-c` value. Too few connections under-utilizes the server; too many wastes resources on context switching. | **Auto-scaling** (`-c 0`): starts with 1 connection, doubles until throughput stops increasing, then locks in the optimal count. No manual tuning needed. |
-| **Short connection** | Not available. | `--short-connection` mode creates and tears down a TCP connection for **every command**, measuring connection establishment overhead — critical for proxy and connection-pool testing. |
-
 ## Table of Contents
 
 - [Installation](#installation)
