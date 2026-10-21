@@ -7,7 +7,7 @@ use tokio::{select, task};
 
 use crate::BenchmarkResult;
 use crate::auto_connection::{AutoConnection, ConnLimiter};
-use crate::client::ClientConfig;
+use crate::client::{Client, ClientConfig};
 use crate::command::CommandGenerator;
 use crate::shared_context::SharedContext;
 use governor::{DefaultDirectRateLimiter, Jitter, Quota};
@@ -53,76 +53,60 @@ async fn run_commands_on_single_thread(conn_limiter: Arc<ConnLimiter>, qps_limit
                     return;
                 }
             }
-            
-            if case.short_connection {
-                // Short connection mode: create a new connection for each command
-                // Note: pipeline must be 1 and load must be false in short_connection mode
-                assert_eq!(case.pipeline, 1, "pipeline must be 1 in short_connection mode");
-                loop {
-                    let pipeline_cnt = context.fetch(case.pipeline);
-                    if pipeline_cnt == 0 {
+
+            let mut client: Option<Client> = None;
+            let mut database = None;
+            loop {
+                let db = match database.or_else(|| context.next_database()) {
+                    Some(db) => db,
+                    None => {
                         context.stop();
                         break;
                     }
+                };
+                let pipeline_cnt = context.fetch(db, case.pipeline);
+                if pipeline_cnt == 0 {
+                    // This database is exhausted. Reuse the connection for another
+                    // database so even a single worker can finish all quotas.
+                    database = None;
+                    continue;
+                }
 
-                    // Rate limiting check
-                    match qps_limiter.as_ref() {
-                        Some(limiter) => {
-                            let j = Jitter::up_to(std::time::Duration::from_micros(1_000_000_u64 * conn_limiter.total_conn / case.target));
-                            limiter.until_ready_with_jitter(j).await;
+                if let Some(limiter) = qps_limiter.as_ref() {
+                    let j = Jitter::up_to(std::time::Duration::from_micros(1_000_000_u64 * conn_limiter.total_conn / case.target));
+                    limiter.until_ready_with_jitter(j).await;
+                }
+
+                if database != Some(db) {
+                    match client.as_mut() {
+                        Some(client) => client.select_database(config.dbids[db]).await,
+                        None => {
+                            // The Redis client selects the database during connection setup.
+                            client = Some(config.get_client(config.dbids[db]).await);
                         }
-                        None => {}
                     }
+                    database = Some(db);
+                }
 
-                    // Create new connection and execute single command
-                    let mut client = config.get_client().await;
-                    let instant = std::time::Instant::now();
-                    let mut p = Vec::new();
-                    p.push(cmd.gen_cmd());
-                    let should_count = client.run_commands(p).await;
-                    let duration = instant.elapsed().as_micros() as u64;
-                    // Explicitly drop connection to close it immediately
-                    drop(client);
-                    
-                    if should_count {
-                        context.histogram.record(duration);
+                let mut p = Vec::new();
+                for _ in 0..pipeline_cnt {
+                    if context.is_loading {
+                        p.push(cmd.gen_cmd_with_lock());
+                    } else {
+                        p.push(cmd.gen_cmd());
                     }
                 }
-            } else {
-                // 长连接模式：复用连接
-                let mut client = config.get_client().await;
-                loop {
-                    let pipeline_cnt = context.fetch(case.pipeline);
-                    if pipeline_cnt == 0 {
-                        context.stop();
-                        break;
-                    }
+                let instant = std::time::Instant::now();
+                let should_count = client.as_mut().unwrap().run_commands(p).await;
+                let duration = instant.elapsed().as_micros() as u64;
 
-                    // 先进行速率限制检查
-                    match qps_limiter.as_ref() {
-                        Some(limiter) => {
-                            let j = Jitter::up_to(std::time::Duration::from_micros(1_000_000_u64 * conn_limiter.total_conn / case.target));
-                            limiter.until_ready_with_jitter(j).await;
-                        }
-                        None => {}
-                    }
-
-                    // prepare pipeline
-                    let mut p = Vec::new();
+                if case.short_connection {
+                    client = None;
+                    database = None;
+                }
+                if should_count {
                     for _ in 0..pipeline_cnt {
-                        if context.is_loading {
-                            p.push(cmd.gen_cmd_with_lock());
-                        } else {
-                            p.push(cmd.gen_cmd());
-                        }
-                    }
-                    let instant = std::time::Instant::now();
-                    let should_count = client.run_commands(p).await;
-                    let duration = instant.elapsed().as_micros() as u64;
-                    if should_count {
-                        for _ in 0..pipeline_cnt {
-                            context.histogram.record(duration);
-                        }
+                        context.histogram.record(duration);
                     }
                 }
             }
@@ -207,6 +191,7 @@ pub fn do_benchmark(client_config: ClientConfig, cores: Vec<u16>, case: Case, lo
         println!("{}: {}", "seconds".bold().blue(), case.seconds);
         println!("{}: {}", "pipeline".bold().blue(), case.pipeline);
         println!("{}: {}", "short_connection".bold().blue(), case.short_connection);
+        println!("{}: {:?}", "dbids".bold().blue(), client_config.dbids);
     }
 
     // calc connections
@@ -224,7 +209,7 @@ pub fn do_benchmark(client_config: ClientConfig, cores: Vec<u16>, case: Case, lo
     let mut thread_handlers = Vec::new();
     let wg = WaitGroup::new();
     let core_ids = core_affinity::get_core_ids().unwrap();
-    let context = SharedContext::new(case.count, case.seconds, load);
+    let context = SharedContext::new(case.count, case.seconds, load, client_config.dbids.len());
     for inx in 0..cores.len() {
         let client_config = client_config.clone();
         let case = case.clone();

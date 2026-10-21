@@ -238,6 +238,7 @@ end
 | `-p` | Server port | 6379 |
 | `-u` | Username for ACL authentication | "" |
 | `-a` | Password for authentication | "" |
+| `--dbid` | Database IDs or inclusive ranges, e.g. `0,1,2,255` or `0-2,255` | 0 |
 | `-c` | Number of connections (0 = auto-scaling) | 0 |
 | `-n` | Total number of requests (0 = unlimited) | 0 |
 | `-s` | Duration in seconds (0 = unlimited) | 0 |
@@ -252,6 +253,19 @@ end
 | `-q` | Quiet mode: suppress progress output | false |
 
 ## Advanced Features
+
+### Multiple Databases
+
+```bash
+resp-benchmark --dbid 0,1,2,255 -c 16 -n 100000 "SET {key sequence 100000} {value 64}"
+resp-benchmark --dbid 0-2,255 --load -c 1 -P 10 -n 100003 "SET {key sequence 100003} {value 64}"
+```
+
+Each connection selects its database during setup and keeps using it. A finite total request count (`-n`) is divided evenly across the selected databases; any remainder goes to the first IDs in the supplied order. For example, 100 requests across `0-2` execute 34, 33, and 33 requests. Duplicate IDs are ignored.
+
+Once a database's quota is exhausted, a long connection executes `SELECT` to serve another database with requests remaining, without reconnecting. Switching occurs after the previous pipeline has completed; `SELECT` does not count toward the request quota or command latency. This also works with fewer connections than databases, automatic connection scaling, pipelines, data loading, and short connections. Short connections still create a new connection for each request. The connection limit is shared across all databases.
+
+The guarantee applies to issued requests when the full count completes, not unique keys or successful writes. Repeated keys may overwrite data. Time-only runs, early termination, and server errors can result in unequal data volumes. In time-only runs, long connections are assigned databases in rotation; use at least as many connections as databases to cover every database. The server must support all selected IDs (e.g. DB 255 requires at least 256 configured databases). Redis cluster mode only supports DB 0.
 
 ### Connection Auto-scaling
 
@@ -391,6 +405,9 @@ bm = Benchmark(host="cluster-endpoint", port=7000, cluster=True)
 
 # Pin to specific CPU cores
 bm = Benchmark(host="127.0.0.1", port=6379, cores="0,1,2,3")
+
+# Divide a finite request count evenly across databases
+bm = Benchmark(host="127.0.0.1", port=6379, dbid="0-2,255")
 ```
 
 ### Loading Data
