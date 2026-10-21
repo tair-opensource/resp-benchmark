@@ -14,16 +14,17 @@ pub struct ClientConfig {
     pub password: String,
     pub tls: bool,
     pub timeout: u64,
+    pub dbids: Vec<i64>,
 }
 
 impl ClientConfig {
-    pub async fn get_client(&self) -> Client {
+    pub async fn get_client(&self, dbid: i64) -> Client {
         let username = encode(&self.username);
         let password = encode(&self.password);
         let conn_str = if self.tls {
-            format!("rediss://{}:{}@{}/#insecure", username, password, &self.address)
+            format!("rediss://{}:{}@{}/{}#insecure", username, password, &self.address, dbid)
         } else {
-            format!("redis://{}:{}@{}", username, password, &self.address)
+            format!("redis://{}:{}@{}/{}", username, password, &self.address, dbid)
         };
 
         if self.cluster {
@@ -32,7 +33,7 @@ impl ClientConfig {
             let conn = match client.get_async_connection().await {
                 Ok(conn) => conn,
                 Err(e) => {
-                    eprintln!("Failed to connect to {}: {}", self.address, e);
+                    eprintln!("Failed to connect to {} (dbid {}): {}", self.address, dbid, e);
                     std::process::exit(1);
                 }
             };
@@ -42,7 +43,7 @@ impl ClientConfig {
             let conn = match client.get_multiplexed_async_connection().await {
                 Ok(conn) => conn,
                 Err(e) => {
-                    eprintln!("Failed to connect to {}: {}", self.address, e);
+                    eprintln!("Failed to connect to {} (dbid {}): {}", self.address, dbid, e);
                     std::process::exit(1);
                 }
             };
@@ -83,6 +84,12 @@ impl Client {
         Client { conn }
     }
 
+    pub async fn select_database(&mut self, dbid: i64) {
+        if let Err(e) = redis::cmd("SELECT").arg(dbid).query_async::<()>(&mut self.conn).await {
+            eprintln!("Failed to select dbid {}: {}", dbid, e);
+            std::process::exit(1);
+        }
+    }
 
     pub async fn run_commands(&mut self, cmds: Vec<redis::Cmd>) -> bool {
         let mut pipeline = redis::pipe();

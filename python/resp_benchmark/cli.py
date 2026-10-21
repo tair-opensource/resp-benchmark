@@ -3,6 +3,7 @@ import sys
 from importlib.metadata import version
 
 from resp_benchmark.wrapper import Benchmark
+from resp_benchmark.dbids import parse_dbids_string
 
 
 def parse_args():
@@ -15,6 +16,7 @@ def parse_args():
     parser.add_argument("-p", metavar="port", type=int, default=6379, help="Server port (default 6379)")
     parser.add_argument("-u", metavar="username", type=str, default="", help="Used to send ACL style \"AUTH username pass\". Needs -a.")
     parser.add_argument("-a", metavar="password", type=str, default="", help="Password for Redis Auth")
+    parser.add_argument("--dbid", default="0", help="Database IDs or inclusive ranges, e.g. 0,1,2,255 or 0-2,255 (default: 0). Total requests are divided evenly between databases.")
     parser.add_argument("-c", metavar="clients", type=int, default=0, help="Number of parallel connections (0 for auto, default: 0)")
     parser.add_argument("--cores", type=str, default=f"", help="Comma-separated list of CPU cores to use (default all)")
     parser.add_argument("--cluster", action="store_true", help="Use cluster mode (default false)")
@@ -32,6 +34,14 @@ def parse_args():
     parser.add_argument("command", type=str, default="SET {key uniform 100000} {value 64}", nargs="?", help="The Redis command to benchmark (default SET {key uniform 100000} {value 64})")
 
     args = parser.parse_args()
+    if args.P <= 0:
+        parser.error("pipeline must be greater than 0")
+    try:
+        dbids = parse_dbids_string(args.dbid)
+        if args.cluster and dbids != [0]:
+            parser.error("--cluster only supports dbid 0")
+    except ValueError as exc:
+        parser.error(str(exc))
     return args
 
 
@@ -44,7 +54,7 @@ def main():
         if args.P > 1:
             print("Error: short_connection mode does not support pipeline (pipeline must be 1)", file=sys.stderr)
             sys.exit(1)
-    bm = Benchmark(host=args.h, port=args.p, username=args.u, password=args.a, cluster=args.cluster, cores=args.cores, timeout=30)
+    bm = Benchmark(host=args.h, port=args.p, username=args.u, password=args.a, cluster=args.cluster, cores=args.cores, timeout=30, dbid=args.dbid)
 
     if args.lua_file:
         args.command = open(args.command).read()

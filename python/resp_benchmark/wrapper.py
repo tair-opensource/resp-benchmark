@@ -6,6 +6,7 @@ import pydantic
 import redis
 
 from .cores import parse_cores_string
+from .dbids import parse_dbids_string
 
 
 @dataclass
@@ -38,6 +39,8 @@ class Benchmark:
         tls (bool): Whether to use TLS for the connection.
         timeout (int): Timeout for the connection in seconds.
         cores (str): Comma-separated list of CPU cores to use.
+        dbid (str): Database IDs or inclusive ranges, e.g. "0-2,255" (default "0").
+            A finite request count is divided evenly between these databases.
     """
 
     @pydantic.validate_call
@@ -51,12 +54,16 @@ class Benchmark:
             # tls: bool = False,
             timeout: int = 30,
             cores: str = "",
+            dbid: str = "0",
     ):
         self.host = host
         self.port = port
         self.username = username
         self.password = password
         self.cluster = cluster
+        self.dbids = parse_dbids_string(dbid)
+        if cluster and self.dbids != [0]:
+            raise ValueError("cluster mode only supports dbid 0")
         # self.tls = tls
         self.timeout = timeout
         if cores == "":
@@ -91,6 +98,8 @@ class Benchmark:
         Returns:
             Result: The results of the benchmark test.
         """
+        if pipeline <= 0:
+            raise ValueError("pipeline must be greater than 0")
         if short_connection and pipeline > 1:
             raise ValueError("short_connection mode does not support pipeline (pipeline must be 1)")
         from . import _resp_benchmark_rust_lib
@@ -103,6 +112,7 @@ class Benchmark:
             tls=False,  # TODO: Implement TLS support
             timeout=self.timeout,
             cores=self.cores,
+            dbids=self.dbids,
 
             command=command,
             connections=connections,
@@ -138,6 +148,8 @@ class Benchmark:
             short_connection (bool): If True, create a new connection for each command and close it after use.
             use_lua (bool): If True, use lua script for generating random command.
         """
+        if pipeline <= 0:
+            raise ValueError("pipeline must be greater than 0")
         if short_connection:
             raise ValueError("short_connection mode does not support loading")
 
@@ -151,6 +163,7 @@ class Benchmark:
             tls=False,
             timeout=self.timeout,
             cores=self.cores,
+            dbids=self.dbids,
 
             command=command,
             connections=connections,
